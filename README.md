@@ -27,6 +27,7 @@ CGO_ENABLED=0 go build -o lookout ./cmd/lookout
 ```sh
 lookout validate config.yaml    # every problem, with the line it is on
 lookout run [-v] config.yaml    # probe and serve the status page until interrupted
+lookout test-alert config.yaml  # send one message through the notifier and exit
 lookout mute --for 30m --group Public
 lookout unmute
 ```

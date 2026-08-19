@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eeegoloauq/lookout/internal/alert"
 	"github.com/eeegoloauq/lookout/internal/config"
 	"github.com/eeegoloauq/lookout/internal/monitor"
 	"github.com/eeegoloauq/lookout/internal/web"
@@ -156,6 +159,35 @@ func TestMuteRequiresFor(t *testing.T) {
 	}
 }
 
+// A monitor whose alerting is switched off has no channel. Pretending
+// the probe succeeded would be the silent-failure mode lookout exists
+// to prevent.
+func TestTestAlertRejectsModeNone(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := run([]string{"test-alert", write(t, valid+"\nalerting:\n  mode: none\n")}, &out, &errOut)
+	if err == nil {
+		t.Fatal("test-alert with mode: none must be an error")
+	}
+	if !strings.Contains(err.Error(), "none") {
+		t.Errorf("error = %q, want it to name mode: none", err)
+	}
+}
+
+// Same credentials as `run`: a missing token must fail here too, or
+// test-alert would be a green light for a process that cannot page.
+func TestTestAlertRequiresTelegramCredentials(t *testing.T) {
+	t.Setenv("LOOKOUT_TELEGRAM_TOKEN", "")
+	t.Setenv("LOOKOUT_TELEGRAM_CHAT_ID", "")
+	var out, errOut bytes.Buffer
+	err := run([]string{"test-alert", write(t, valid)}, &out, &errOut)
+	if err == nil {
+		t.Fatal("test-alert without telegram credentials must be an error")
+	}
+	if !strings.Contains(err.Error(), "LOOKOUT_TELEGRAM_TOKEN") {
+		t.Errorf("error = %q, want it to name the missing variable", err)
+	}
+}
+
 func TestHelpAndVersion(t *testing.T) {
 	for _, args := range [][]string{{"help"}, {"version"}} {
 		var out, errOut bytes.Buffer
@@ -165,5 +197,111 @@ func TestHelpAndVersion(t *testing.T) {
 		if out.Len() == 0 {
 			t.Errorf("%v printed nothing", args)
 		}
+	}
+}
+
+// The command is how an operator proves the channel before the first
+// outage; it has to be visible next to validate and run, not hidden.
+func TestHelpListsTestAlert(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := run([]string{"help"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "test-alert") {
+		t.Errorf("usage = %q, want test-alert listed next to the other commands", out.String())
+	}
+}
+
+func stubTelegram(t *testing.T, handler http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	orig := newNotifier
+	t.Cleanup(func() { newNotifier = orig })
+	newNotifier = func(string) (alert.Notifier, error) {
+		tg, err := alert.NewTelegram("123:test-token", "1", "")
+		if err != nil {
+			return nil, err
+		}
+		tg.SetAPI(srv.URL)
+		return tg, nil
+	}
+}
+
+// The whole point of the command is to find out the channel is dead
+// *before* an outage, with the Bot API's own words, not a generic failure.
+func TestTestAlertPrintsWhyDeliveryFailed(t *testing.T) {
+	stubTelegram(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"ok":false,"description":"Unauthorized: bad token"}`))
+	})
+	var out, errOut bytes.Buffer
+	err := run([]string{"test-alert", write(t, valid)}, &out, &errOut)
+	if err == nil {
+		t.Fatal("a rejected sendMessage must be an error")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("error = %q, want the HTTP status", err)
+	}
+	if !strings.Contains(err.Error(), "Unauthorized: bad token") {
+		t.Errorf("error = %q, want Telegram's description", err)
+	}
+}
+
+// Exit 0 is the only success signal the command has, so it must mean
+// sendMessage returned ok, not merely that lookout built a payload.
+func TestTestAlertSucceedsWhenBotAPIConfirms(t *testing.T) {
+	var gotText string
+	stubTelegram(t, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Text string `json:"text"`
+		}
+		_ = jsonDecode(r, &req)
+		gotText = req.Text
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	var out, errOut bytes.Buffer
+	if err := run([]string{"test-alert", write(t, valid)}, &out, &errOut); err != nil {
+		t.Fatalf("test-alert: %v", err)
+	}
+	want := "lookout test from " + host + ", 1 check configured"
+	if gotText != want {
+		t.Errorf("sent %q, want %q", gotText, want)
+	}
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("stdout = %q, want the delivered text", out.String())
+	}
+}
+
+func jsonDecode(r *http.Request, v any) error {
+	defer r.Body.Close()
+	return json.NewDecoder(r.Body).Decode(v)
+}
+
+// A probe of the channel is not an incident. Writing the state file would
+// make a successful test look like a restart, and an unsuccessful one
+// like a queued outage.
+func TestTestAlertDoesNotTouchTheStateFile(t *testing.T) {
+	stubTelegram(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"ok":true}`))
+	})
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	cfgPath := filepath.Join(dir, "config.yaml")
+	src := "state:\n  file: " + statePath + "\n" + valid
+	if err := os.WriteFile(cfgPath, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if err := run([]string{"test-alert", cfgPath}, &out, &errOut); err != nil {
+		t.Fatalf("test-alert: %v", err)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("state file was written: %v", err)
 	}
 }

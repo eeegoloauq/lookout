@@ -55,6 +55,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return muteCmd(args[1:], stdout)
 	case "unmute":
 		return unmuteCmd(args[1:], stdout)
+	case "test-alert":
+		return testAlert(args[1:], stdout)
 	case "version":
 		fmt.Fprintln(stdout, version())
 		return nil
@@ -80,6 +82,8 @@ commands:
                       running process over its HTTP listen address
   unmute [--group NAME] [--check NAME] [config]
                       lift an ad-hoc mute (scheduled windows stay)
+  test-alert [config] send one message through the configured notifier
+                      and exit; does not touch state or the outbox
   version             print the build version
 
 The configuration defaults to `+defaultConfigPath+`.
@@ -263,6 +267,50 @@ func serve(args []string, stderr io.Writer) error {
 	}
 	log.Info("lookout stopped")
 	return err
+}
+
+// newNotifier is the production Telegram constructor. Tests replace it
+// so a failed Bot API reply can be asserted without leaving the machine.
+var newNotifier = func(proxy string) (alert.Notifier, error) {
+	return alert.TelegramFromEnv(proxy)
+}
+
+// testAlert is a probe of the channel, not an event: it must not write
+// the state file or the outbox, because a "can we still page?" check is
+// not an incident and must not reset anyone's cooldown.
+func testAlert(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("test-alert", flag.ContinueOnError)
+	fs.SetOutput(out)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadFile(configPath(fs.Args()))
+	if err != nil {
+		return err
+	}
+	if cfg.Alerting.Mode == config.ModeNone {
+		return errors.New("alerting.mode is none: there is no channel to probe")
+	}
+	n, err := newNotifier(cfg.Alerting.Telegram.Proxy)
+	if err != nil {
+		return err
+	}
+	return probeChannel(n, cfg, out)
+}
+
+func probeChannel(n alert.Notifier, cfg *config.Config, out io.Writer) error {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	text := fmt.Sprintf("lookout test from %s, %s configured", host, plural(len(cfg.Checks), "check"))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := n.Notify(ctx, text); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, text)
+	return nil
 }
 
 func muteCmd(args []string, out io.Writer) error {
