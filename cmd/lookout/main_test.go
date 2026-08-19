@@ -32,6 +32,9 @@ func TestValidateAcceptsAGoodConfig(t *testing.T) {
 	if !strings.Contains(out.String(), "1 check") || !strings.Contains(out.String(), "no problems found") {
 		t.Errorf("output = %q", out.String())
 	}
+	if !strings.Contains(out.String(), "listen: 127.0.0.1:8080") {
+		t.Errorf("output = %q, want the loopback listen address", out.String())
+	}
 }
 
 // A broken configuration must produce a readable error with a line number, and

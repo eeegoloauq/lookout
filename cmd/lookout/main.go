@@ -9,16 +9,19 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime/debug"
 	"sort"
 	"syscall"
+	"time"
 
 	"github.com/eeegoloauq/lookout/internal/alert"
 	"github.com/eeegoloauq/lookout/internal/config"
 	"github.com/eeegoloauq/lookout/internal/monitor"
 	"github.com/eeegoloauq/lookout/internal/probe"
+	"github.com/eeegoloauq/lookout/internal/web"
 )
 
 const defaultConfigPath = "config.yaml"
@@ -58,7 +61,8 @@ func usage(w io.Writer) {
 commands:
   validate [config]   check the configuration and exit; prints every problem
                       it finds, with the line it is on
-  run [-v] [config]   probe the configured checks until interrupted
+  run [-v] [config]   probe the configured checks and serve the status
+                      page until interrupted
   version             print the build version
 
 The configuration defaults to `+defaultConfigPath+`.
@@ -101,6 +105,7 @@ func validate(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "  %s: %d\n", g, groups[g])
 	}
 	fmt.Fprintf(out, "state file: %s\n", cfg.StateFile)
+	fmt.Fprintf(out, "listen: %s\n", cfg.Listen)
 	fmt.Fprintf(out, "alerting: telegram, batch window %s", cfg.Alerting.BatchWindow)
 	if cfg.Alerting.Telegram.Proxy != "" {
 		fmt.Fprintf(out, ", socks5 proxy configured")
@@ -154,14 +159,44 @@ func serve(args []string, stderr io.Writer) error {
 	}
 
 	m := monitor.New(cfg, probe.NewHTTP(), monitor.WithLogger(log), monitor.WithNotifier(notifier))
+	// Load durable state before the first HTTP request so a start page
+	// hitting /api/status during startup does not see a blank machine
+	// that is about to be restored.
+	m.Restore()
+
+	httpSrv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           web.New(m, version()),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	httpErr := make(chan error, 1)
+	go func() {
+		log.Info("http listening", "addr", cfg.Listen)
+		err := httpSrv.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			httpErr <- err
+			stop()
+			return
+		}
+		httpErr <- nil
+	}()
+
 	log.Info("lookout starting",
 		"version", version(),
 		"checks", len(cfg.Checks),
 		"config", path,
 		"state", cfg.StateFile,
+		"listen", cfg.Listen,
 		"batch_window", cfg.Alerting.BatchWindow,
 		"telegram_proxy", cfg.Alerting.Telegram.Proxy != "")
 	err = m.Run(ctx)
+
+	shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = httpSrv.Shutdown(shutCtx)
+	if herr := <-httpErr; herr != nil && err == nil {
+		return herr
+	}
 	log.Info("lookout stopped")
 	return err
 }
