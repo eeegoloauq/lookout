@@ -1,0 +1,9 @@
+{
+  "description": "test bootstrap",
+  "publication": "2026-07-23T02:00:03Z",
+  "version": "1.0",
+  "services": [
+    [["com", "net"], ["https://rdap.registry.example/com/v1/"]],
+    [["dev"], ["https://rdap.registry.example/dev/"]]
+  ]
+}

@@ -1,0 +1,9 @@
+% IANA WHOIS server
+% This query returned 1 object
+
+domain:       EXAMPLE-TLD
+organisation: Example Registry
+whois:        whois.tcinet.ru
+status:       ACTIVE
+created:      1994-04-07
+source:       IANA
