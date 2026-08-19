@@ -70,6 +70,10 @@ type fileCheck struct {
 	Group            string            `yaml:"group"`
 	Type             string            `yaml:"type"`
 	URL              string            `yaml:"url"`
+	Host             string            `yaml:"host"`
+	Domain           string            `yaml:"domain"`
+	QueryType        string            `yaml:"query_type"`
+	Resolver         *string           `yaml:"resolver"`
 	Method           *string           `yaml:"method"`
 	Headers          map[string]string `yaml:"headers"`
 	Interval         *string           `yaml:"interval"`
@@ -82,10 +86,12 @@ type fileCheck struct {
 }
 
 type fileExpect struct {
-	Status       any           `yaml:"status"`
-	Body         yaml.MapSlice `yaml:"body"`
-	BodyContains *string       `yaml:"body_contains"`
-	ResponseTime *string       `yaml:"response_time"`
+	Status         any           `yaml:"status"`
+	Body           yaml.MapSlice `yaml:"body"`
+	BodyContains   *string       `yaml:"body_contains"`
+	ResponseTime   *string       `yaml:"response_time"`
+	Rcode          *string       `yaml:"rcode"`
+	AnswersContain *string       `yaml:"answers_contain"`
 }
 
 // LoadFile reads and validates a configuration file. On failure the error is an
@@ -171,8 +177,11 @@ func resolve(c *collector, raw *fileConfig) *Config {
 	}
 
 	def := defaultCheck()
+	origin := defaultOrigin{}
 	if raw.Defaults != nil {
 		applyDefaults(c, "defaults", raw.Defaults, &def)
+		origin.interval = raw.Defaults.Interval != nil
+		origin.timeout = raw.Defaults.Timeout != nil
 	}
 
 	if len(raw.Checks) == 0 {
@@ -183,7 +192,7 @@ func resolve(c *collector, raw *fileConfig) *Config {
 	seen := make(map[string]int, len(raw.Checks))
 	for i, rc := range raw.Checks {
 		path := fmt.Sprintf("checks[%d]", i)
-		chk := resolveCheck(c, path, rc, def)
+		chk := resolveCheck(c, path, rc, def, origin)
 		if chk.Name != "" {
 			if first, dup := seen[chk.Name]; dup {
 				c.addf(path+".name", "duplicate check name %q, already used by checks[%d]", chk.Name, first)
@@ -194,6 +203,14 @@ func resolve(c *collector, raw *fileConfig) *Config {
 		cfg.Checks = append(cfg.Checks, chk)
 	}
 	return cfg
+}
+
+// defaultOrigin records which scalars the defaults block actually set, so a
+// dns/domain check can keep its type-specific interval when the operator
+// never asked for a global one.
+type defaultOrigin struct {
+	interval bool
+	timeout  bool
 }
 
 func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {
@@ -362,7 +379,7 @@ func applyInstability(c *collector, path string, in *fileInstability, into *Inst
 	}
 }
 
-func resolveCheck(c *collector, path string, rc fileCheck, chk Check) Check {
+func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin defaultOrigin) Check {
 	chk.Name = strings.TrimSpace(rc.Name)
 	if chk.Name == "" {
 		c.addf(path+".name", "name is required: it identifies the check in state, alerts and the API")
@@ -376,11 +393,15 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check) Check {
 		c.addf(path+".type", "type is required, one of %q, %q, %q", TypeHTTP, TypeDNS, TypeDomain)
 	case string(TypeHTTP):
 		chk.Type = TypeHTTP
-	case string(TypeDNS), string(TypeDomain):
-		c.addf(path+".type", "check type %q is not implemented yet; this release probes %q checks only", rc.Type, TypeHTTP)
+	case string(TypeDNS):
+		chk.Type = TypeDNS
+	case string(TypeDomain):
+		chk.Type = TypeDomain
 	default:
 		c.addf(path+".type", "unknown check type %q, expected one of %q, %q, %q", rc.Type, TypeHTTP, TypeDNS, TypeDomain)
 	}
+
+	applyTypeDefaults(&chk, origin, rc)
 
 	if rc.Interval != nil {
 		if v, ok := duration(c, path+".interval", *rc.Interval); ok {
@@ -391,6 +412,13 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check) Check {
 		if v, ok := duration(c, path+".timeout", *rc.Timeout); ok {
 			chk.Timeout = v
 		}
+	}
+	if chk.Type == TypeDomain && chk.Interval < DomainMinInterval {
+		where := path + ".interval"
+		if rc.Interval == nil {
+			where = path
+		}
+		c.addf(where, "domain checks must run at most once per hour (got interval %s): registries are not liveness endpoints", chk.Interval)
 	}
 	// Probes must not overlap, or consecutive results stop being independent
 	// samples and every rate in the system is computed over a wrong denominator.
@@ -403,7 +431,9 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check) Check {
 	}
 
 	if rc.Method != nil {
-		if v, ok := method(c, path+".method", *rc.Method); ok {
+		if chk.Type != TypeHTTP {
+			c.addf(path+".method", "method is only valid on %q checks", TypeHTTP)
+		} else if v, ok := method(c, path+".method", *rc.Method); ok {
 			chk.Method = v
 		}
 	}
@@ -424,10 +454,208 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check) Check {
 		applyInstability(c, path+".instability", rc.Instability, &chk.Instability)
 	}
 
-	chk.URL = resolveURL(c, path, rc)
-	chk.Headers = resolveHeaders(c, path, rc.Headers)
-	chk.Expect = resolveExpect(c, path, rc.Expect, chk.Timeout)
+	switch chk.Type {
+	case TypeHTTP:
+		if strings.TrimSpace(rc.Host) != "" {
+			c.addf(path+".host", "host is for %q and %q checks; %q checks use url", TypeDNS, TypeDomain, TypeHTTP)
+		}
+		if strings.TrimSpace(rc.Domain) != "" {
+			c.addf(path+".domain", "domain is for %q checks; %q checks use url", TypeDomain, TypeHTTP)
+		}
+		if rc.QueryType != "" {
+			c.addf(path+".query_type", "query_type is only valid on %q checks", TypeDNS)
+		}
+		if rc.Resolver != nil {
+			c.addf(path+".resolver", "resolver is only valid on %q checks", TypeDNS)
+		}
+		chk.URL = resolveURL(c, path, rc)
+		chk.Headers = resolveHeaders(c, path, rc.Headers)
+	case TypeDNS:
+		rejectHTTPFields(c, path, rc)
+		chk.Host = resolveHost(c, path, rc, true)
+		chk.QueryType = resolveQueryType(c, path, rc)
+		if rc.Resolver != nil {
+			chk.Resolver = resolveResolver(c, path+".resolver", *rc.Resolver)
+		}
+	case TypeDomain:
+		rejectHTTPFields(c, path, rc)
+		if rc.QueryType != "" {
+			c.addf(path+".query_type", "query_type is only valid on %q checks", TypeDNS)
+		}
+		if rc.Resolver != nil {
+			c.addf(path+".resolver", "resolver is only valid on %q checks", TypeDNS)
+		}
+		chk.Host = resolveHost(c, path, rc, false)
+	}
+
+	chk.Expect = resolveExpect(c, path, rc.Expect, chk.Timeout, chk.Type)
 	return chk
+}
+
+func applyTypeDefaults(chk *Check, origin defaultOrigin, rc fileCheck) {
+	if rc.Interval != nil {
+		return
+	}
+	if origin.interval {
+		return
+	}
+	switch chk.Type {
+	case TypeDNS:
+		chk.Interval = DefaultDNSInterval
+	case TypeDomain:
+		chk.Interval = DefaultDomainInterval
+		if rc.Timeout == nil && !origin.timeout {
+			chk.Timeout = DefaultDomainTimeout
+		}
+	}
+}
+
+func rejectHTTPFields(c *collector, path string, rc fileCheck) {
+	if strings.TrimSpace(rc.URL) != "" {
+		c.addf(path+".url", "url is for %q checks; use host or domain", TypeHTTP)
+	}
+	if rc.Method != nil {
+		// already reported in resolveCheck
+	}
+	if len(rc.Headers) > 0 {
+		c.addf(path+".headers", "headers are only valid on %q checks", TypeHTTP)
+	}
+}
+
+func resolveQueryType(c *collector, path string, rc fileCheck) QueryType {
+	raw := strings.ToUpper(strings.TrimSpace(rc.QueryType))
+	if raw == "" {
+		c.addf(path+".query_type", "query_type is required for %q checks, one of %s", TypeDNS, joinQueryTypes())
+		return ""
+	}
+	for _, known := range QueryTypes {
+		if raw == string(known) {
+			return known
+		}
+	}
+	c.addf(path+".query_type", "unknown query_type %q, expected one of %s", rc.QueryType, joinQueryTypes())
+	return ""
+}
+
+func joinQueryTypes() string {
+	parts := make([]string, len(QueryTypes))
+	for i, q := range QueryTypes {
+		parts[i] = string(q)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func resolveHost(c *collector, path string, rc fileCheck, dns bool) string {
+	host := strings.TrimSpace(rc.Host)
+	domain := strings.TrimSpace(rc.Domain)
+	field := path + ".host"
+	raw := host
+	switch {
+	case dns:
+		if host == "" && domain != "" {
+			raw = domain
+			field = path + ".domain"
+		}
+		if raw == "" {
+			c.addf(path+".host", "host is required for %q checks (the name to query)", TypeDNS)
+			return ""
+		}
+		if host != "" && domain != "" && host != domain {
+			c.addf(path+".domain", "host and domain both set and differ (%q vs %q); use one", host, domain)
+		}
+	default:
+		if domain != "" {
+			raw = domain
+			field = path + ".domain"
+		} else if host != "" {
+			raw = host
+		}
+		if raw == "" {
+			c.addf(path+".domain", "domain is required for %q checks (the registered name to watch)", TypeDomain)
+			return ""
+		}
+		if host != "" && domain != "" && host != domain {
+			c.addf(path+".host", "host and domain both set and differ (%q vs %q); use one", host, domain)
+		}
+	}
+	expanded, ok := expand(c, field, raw)
+	if !ok {
+		return ""
+	}
+	expanded = strings.TrimSpace(expanded)
+	ascii, err := canonicalName(expanded)
+	if err != nil {
+		c.addf(field, "%v", err)
+		return ""
+	}
+	return ascii
+}
+
+func canonicalName(raw string) (string, error) {
+	s := strings.TrimSuffix(strings.TrimSpace(raw), ".")
+	if s == "" {
+		return "", fmt.Errorf("name is empty")
+	}
+	if strings.Contains(s, "://") {
+		return "", fmt.Errorf("name %q looks like a URL; use a hostname", raw)
+	}
+	if strings.ContainsAny(s, " \t\r\n/") {
+		return "", fmt.Errorf("name %q is not a hostname", raw)
+	}
+	for _, r := range s {
+		if r > 127 {
+			return "", fmt.Errorf("name %q contains non-ASCII; write the punycode form (xn--…)", raw)
+		}
+	}
+	ascii := strings.ToLower(s)
+	if !strings.Contains(ascii, ".") {
+		return "", fmt.Errorf("name %q must be a FQDN (need at least two labels)", raw)
+	}
+	for _, label := range strings.Split(ascii, ".") {
+		if label == "" {
+			return "", fmt.Errorf("name %q contains an empty label", raw)
+		}
+	}
+	return ascii, nil
+}
+
+func resolveResolver(c *collector, path, raw string) string {
+	expanded, ok := expand(c, path, raw)
+	if !ok {
+		return ""
+	}
+	expanded = strings.TrimSpace(expanded)
+	if expanded == "" {
+		return ""
+	}
+	host, port, err := splitHostPortDefault(expanded, "53")
+	if err != nil {
+		c.addf(path, "resolver %q is not a host or host:port: %v", expanded, err)
+		return ""
+	}
+	if host == "" {
+		c.addf(path, "resolver %q has no host", expanded)
+		return ""
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		c.addf(path, "resolver port %q is not a valid UDP port", port)
+		return ""
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func splitHostPortDefault(addr, defaultPort string) (host, port string, err error) {
+	if _, _, err := net.SplitHostPort(addr); err == nil {
+		return net.SplitHostPort(addr)
+	}
+	// net.SplitHostPort rejects a bare IPv6 address. Try wrapping it.
+	if strings.Count(addr, ":") >= 2 && !strings.HasPrefix(addr, "[") {
+		if h, p, err := net.SplitHostPort("[" + addr + "]:" + defaultPort); err == nil {
+			return h, p, nil
+		}
+	}
+	return addr, defaultPort, nil
 }
 
 func resolveURL(c *collector, path string, rc fileCheck) string {
@@ -492,27 +720,41 @@ func resolveHeaders(c *collector, path string, in map[string]string) map[string]
 	return out
 }
 
-func resolveExpect(c *collector, path string, in *fileExpect, timeout time.Duration) Expect {
+func resolveExpect(c *collector, path string, in *fileExpect, timeout time.Duration, typ Type) Expect {
 	var exp Expect
 	epath := path + ".expect"
-	if in == nil || in.Status == nil {
-		// Documented default: without it a check would report "up" on a 500.
-		m, err := ParseStatus(DefaultStatus)
-		if err != nil {
-			panic("config: built-in default status does not parse: " + err.Error())
+
+	httpOnly := typ == TypeHTTP || typ == ""
+	dnsOnly := typ == TypeDNS
+
+	if httpOnly {
+		if in == nil || in.Status == nil {
+			// Documented default: without it a check would report "up" on a 500.
+			m, err := ParseStatus(DefaultStatus)
+			if err != nil {
+				panic("config: built-in default status does not parse: " + err.Error())
+			}
+			exp.Status = m
+		} else if m, err := ParseStatus(in.Status); err != nil {
+			c.addf(epath+".status", "%v", err)
+		} else {
+			exp.Status = m
 		}
-		exp.Status = m
-	} else if m, err := ParseStatus(in.Status); err != nil {
-		c.addf(epath+".status", "%v", err)
-	} else {
-		exp.Status = m
+	} else if in != nil && in.Status != nil {
+		c.addf(epath+".status", "status is only valid on %q checks", TypeHTTP)
 	}
+
 	if in == nil {
+		if dnsOnly {
+			exp.Rcode = DefaultRcode
+		}
 		return exp
 	}
 
 	if in.BodyContains != nil {
-		if *in.BodyContains == "" {
+		if !httpOnly {
+			c.addf(epath+".body_contains", "body_contains is only valid on %q checks", TypeHTTP)
+		} else if *in.BodyContains == "" {
 			c.addf(epath+".body_contains", "body_contains is empty: it would match every response")
 		} else {
 			exp.BodyContains = *in.BodyContains
@@ -532,6 +774,33 @@ func resolveExpect(c *collector, path string, in *fileExpect, timeout time.Durat
 				exp.ResponseTime = m
 			}
 		}
+	}
+
+	if in.Rcode != nil {
+		if !dnsOnly {
+			c.addf(epath+".rcode", "rcode is only valid on %q checks", TypeDNS)
+		} else if code, err := ParseRcode(*in.Rcode); err != nil {
+			c.addf(epath+".rcode", "%v", err)
+		} else {
+			exp.Rcode = code
+		}
+	} else if dnsOnly {
+		exp.Rcode = DefaultRcode
+	}
+
+	if in.AnswersContain != nil {
+		if !dnsOnly {
+			c.addf(epath+".answers_contain", "answers_contain is only valid on %q checks", TypeDNS)
+		} else if strings.TrimSpace(*in.AnswersContain) == "" {
+			c.addf(epath+".answers_contain", "answers_contain is empty: it would match every response")
+		} else {
+			exp.AnswersContain = *in.AnswersContain
+		}
+	}
+
+	if len(in.Body) > 0 && !httpOnly {
+		c.addf(epath+".body", "body is only valid on %q checks", TypeHTTP)
+		return exp
 	}
 
 	seen := make(map[string]bool, len(in.Body))

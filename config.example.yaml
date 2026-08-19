@@ -7,7 +7,8 @@
 #   lookout validate config.yaml    # checks everything before the process starts
 #   lookout run config.yaml
 #
-# This release probes HTTP checks; dns and domain checks arrive in a later one.
+# HTTP, DNS and domain checks. Certificate expiry is read from the HTTPS
+# handshake of an http check — there is no separate type for it.
 
 # Status page, JSON API and /metrics. Default is loopback only — the
 # page is for the machine that runs lookout, not the rest of the LAN.
@@ -91,3 +92,23 @@ checks:
     type: http
     url: http://lab.service.example:9000/
     alert: false          # monitored and graphed, but never notifies
+
+  - name: MX
+    group: Public
+    type: dns
+    host: service.example
+    query_type: MX
+    # resolver: 192.0.2.53   # optional; default is the system nameserver
+    expect:
+      rcode: NOERROR
+      answers_contain: mail.service.example
+    # interval defaults to 5m. A changed answer set (NS/MX/A snapshot)
+    # is drift: the first probe is a baseline, later changes alert.
+
+  - name: service.example
+    group: Public
+    type: domain
+    domain: service.example
+    interval: 24h         # required when defaults.interval is shorter; registries are not liveness endpoints
+    # RDAP first; WHOIS on TCP/43 if the TLD has no RDAP
+    # (.ru → whois.tcinet.ru, field paid-till).

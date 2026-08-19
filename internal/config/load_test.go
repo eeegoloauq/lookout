@@ -198,8 +198,14 @@ func TestValidateRejects(t *testing.T) {
 	}{
 		{"no checks", "checks: []\n", "no checks defined"},
 		{"missing type", "checks:\n  - name: A\n    url: http://a.invalid\n", "type is required"},
-		{"unimplemented type", "checks:\n  - name: A\n    type: dns\n", "not implemented yet"},
 		{"missing url", "checks:\n  - name: A\n    type: http\n", "url is required"},
+		{"dns missing host", "checks:\n  - name: A\n    type: dns\n    query_type: A\n", "host is required"},
+		{"dns missing query type", "checks:\n  - name: A\n    type: dns\n    host: service.example\n", "query_type is required"},
+		{"dns bad query type", "checks:\n  - name: A\n    type: dns\n    host: service.example\n    query_type: PTR\n", "unknown query_type"},
+		{"dns url not allowed", "checks:\n  - name: A\n    type: dns\n    host: service.example\n    query_type: A\n    url: http://service.example\n", "url is for"},
+		{"domain missing name", "checks:\n  - name: A\n    type: domain\n", "domain is required"},
+		{"domain too frequent", "checks:\n  - name: A\n    type: domain\n    domain: service.example\n    interval: 5m\n", "once per hour"},
+		{"host not fqdn", "checks:\n  - name: A\n    type: dns\n    host: localhost\n    query_type: A\n", "FQDN"},
 		{"unknown field", minimal + "    intervals: 5s\n", "unknown field"},
 		{"duplicate key", minimal + "    url: http://b.invalid\n", "already defined"},
 		{"bad duration", minimal + "    interval: 5 seconds\n", "is not a duration"},
@@ -314,5 +320,133 @@ func TestExampleConfigLoads(t *testing.T) {
 	t.Setenv("LOOKOUT_BASIC_AUTH", "dXNlcjpwYXNz")
 	if _, err := LoadFile("../../config.example.yaml"); err != nil {
 		t.Fatalf("config.example.yaml must be valid: %v", err)
+	}
+}
+
+func TestDNSCheckDefaultsAndFields(t *testing.T) {
+	cfg := mustLoad(t, `
+checks:
+  - name: MX
+    type: dns
+    host: service.example
+    query_type: mx
+    resolver: 192.0.2.53
+    expect:
+      answers_contain: mail.service.example
+`)
+	c := cfg.Checks[0]
+	if c.Type != TypeDNS {
+		t.Fatalf("type = %q", c.Type)
+	}
+	if c.Host != "service.example" {
+		t.Errorf("host = %q", c.Host)
+	}
+	if c.QueryType != QueryMX {
+		t.Errorf("query_type = %q", c.QueryType)
+	}
+	if c.Resolver != "192.0.2.53:53" {
+		t.Errorf("resolver = %q", c.Resolver)
+	}
+	if c.Interval != DefaultDNSInterval {
+		t.Errorf("interval = %s, want the dns default %s", c.Interval, DefaultDNSInterval)
+	}
+	if c.Expect.Rcode != DefaultRcode {
+		t.Errorf("rcode = %q, want the default %q", c.Expect.Rcode, DefaultRcode)
+	}
+	if c.Expect.AnswersContain != "mail.service.example" {
+		t.Errorf("answers_contain = %q", c.Expect.AnswersContain)
+	}
+	if !c.Expect.Status.IsZero() {
+		t.Errorf("dns checks must not inherit the HTTP status default, got %q", c.Expect.Status)
+	}
+	if !c.Alert {
+		t.Error("a dns check without alert: must still alert")
+	}
+}
+
+func TestDomainCheckDefaultsAndFields(t *testing.T) {
+	cfg := mustLoad(t, `
+checks:
+  - name: Registration
+    type: domain
+    domain: service.example
+`)
+	c := cfg.Checks[0]
+	if c.Type != TypeDomain || c.Host != "service.example" {
+		t.Fatalf("got type=%q host=%q", c.Type, c.Host)
+	}
+	if c.Interval != DefaultDomainInterval {
+		t.Errorf("interval = %s, want %s", c.Interval, DefaultDomainInterval)
+	}
+	if c.Timeout != DefaultDomainTimeout {
+		t.Errorf("timeout = %s, want %s", c.Timeout, DefaultDomainTimeout)
+	}
+	if !c.Expect.Status.IsZero() {
+		t.Errorf("domain checks must not inherit the HTTP status default")
+	}
+	if !c.Alert {
+		t.Error("a domain check without alert: must still alert")
+	}
+}
+
+func TestDomainAcceptsHostAlias(t *testing.T) {
+	cfg := mustLoad(t, `
+checks:
+  - name: Registration
+    type: domain
+    host: service.example
+`)
+	if cfg.Checks[0].Host != "service.example" {
+		t.Errorf("host = %q", cfg.Checks[0].Host)
+	}
+}
+
+func TestDefaultsIntervalDoesNotOverrideTypeDefaultWhenUnset(t *testing.T) {
+	// A global defaults.interval must still apply — the operator asked
+	// for it — but a missing defaults block leaves dns/domain alone.
+	cfg := mustLoad(t, `
+defaults:
+  interval: 90s
+  timeout: 5s
+checks:
+  - name: Web
+    type: http
+    url: http://service.example
+  - name: MX
+    type: dns
+    host: service.example
+    query_type: MX
+    interval: 5m
+`)
+	if cfg.Checks[0].Interval != 90*time.Second {
+		t.Errorf("http interval = %s, want the defaults block", cfg.Checks[0].Interval)
+	}
+	if cfg.Checks[1].Interval != 5*time.Minute {
+		t.Errorf("dns interval = %s, want the per-check override", cfg.Checks[1].Interval)
+	}
+}
+
+func TestIDNHostMustBeWrittenAsPunycode(t *testing.T) {
+	_, err := Load("config.yaml", []byte(`
+checks:
+  - name: IDN
+    type: domain
+    domain: "пример.example"
+`))
+	if err == nil {
+		t.Fatal("want an error: we do not take x/text just to convert IDN")
+	}
+	if !strings.Contains(err.Error(), "punycode") {
+		t.Errorf("error = %q, want it to ask for punycode", err)
+	}
+
+	cfg := mustLoad(t, `
+checks:
+  - name: IDN
+    type: domain
+    domain: xn--e1afmkfd.example
+`)
+	if cfg.Checks[0].Host != "xn--e1afmkfd.example" {
+		t.Errorf("host = %q", cfg.Checks[0].Host)
 	}
 }

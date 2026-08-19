@@ -33,6 +33,17 @@ const (
 	// reading of "LAN" as the loopback default).
 	DefaultListen = "127.0.0.1:8080"
 
+	// Type-specific intervals (SPEC §5). HTTP keeps DefaultInterval;
+	// DNS and domain checks are cheaper to run slowly than to hammer
+	// a resolver or a registry.
+	DefaultDNSInterval    = 5 * time.Minute
+	DefaultDomainInterval = 24 * time.Hour
+	DefaultDomainTimeout  = 15 * time.Second
+	// DomainMinInterval is how often a registry may be asked. Daily
+	// is the intended cadence; anything under an hour is a misconfig
+	// that would look like a scraper.
+	DomainMinInterval = time.Hour
+
 	// Telegram credentials live in the environment, never in the config file
 	// (SPEC §6, §11). Empty values are treated as missing.
 	EnvTelegramToken  = "LOOKOUT_TELEGRAM_TOKEN"
@@ -52,6 +63,20 @@ const (
 	TypeDNS    Type = "dns"
 	TypeDomain Type = "domain"
 )
+
+// QueryType is a DNS resource record type a dns check will ask for.
+type QueryType string
+
+const (
+	QueryA    QueryType = "A"
+	QueryAAAA QueryType = "AAAA"
+	QueryMX   QueryType = "MX"
+	QueryNS   QueryType = "NS"
+	QueryTXT  QueryType = "TXT"
+)
+
+// QueryTypes is the set a dns check may name.
+var QueryTypes = []QueryType{QueryA, QueryAAAA, QueryMX, QueryNS, QueryTXT}
 
 // Config is a validated configuration.
 type Config struct {
@@ -100,6 +125,15 @@ type Check struct {
 	Method  string
 	Headers map[string]string
 
+	// Host is the DNS name a dns check queries, or the registered
+	// name a domain check watches. Empty on http checks.
+	Host string
+	// QueryType is set on dns checks only.
+	QueryType QueryType
+	// Resolver is host:port of the nameserver a dns check talks to.
+	// Empty means "look the system resolver up at probe time".
+	Resolver string
+
 	Interval time.Duration
 	Timeout  time.Duration
 
@@ -127,6 +161,13 @@ type Expect struct {
 	Body         []BodyExpect
 	BodyContains string
 	ResponseTime DurationMatcher
+
+	// Rcode is the expected DNS response code (NOERROR, NXDOMAIN, …).
+	// Empty on non-dns checks; dns checks default to NOERROR.
+	Rcode string
+	// AnswersContain is a case-insensitive substring that must appear
+	// in the rendered DNS answers.
+	AnswersContain string
 }
 
 // BodyExpect is one "path in the body must equal this value" condition.
