@@ -23,26 +23,35 @@ const (
 	// alternating never reaches the failure threshold, so without this it
 	// would deliver 50% of requests and still look perfect.
 	EventUnstable EventKind = "unstable"
+	// EventSummary is produced by the outbox itself when the queue would
+	// otherwise drop events: a digest of what overflow discarded, so silence
+	// cannot be the overflow policy.
+	EventSummary EventKind = "summary"
 )
 
-// Event is a state change worth telling someone about. Series 1 produces
-// events; delivering them is the next release's job.
+// Event is a state change worth telling someone about. It is written to the
+// durable outbox before anyone tries to deliver it, so a crash or a dead
+// channel cannot turn a confirmed incident into silence.
 type Event struct {
-	Kind  EventKind
-	Check string
-	Group string
-	At    time.Time
+	Kind  EventKind `json:"kind"`
+	Check string    `json:"check,omitempty"`
+	Group string    `json:"group,omitempty"`
+	At    time.Time `json:"at,omitzero"`
 	// Alert carries the check's alert setting, which defaults to true. It
 	// travels with the event so that the decision is made from the config and
 	// not from the absence of one.
-	Alert  bool
-	Result check.Result
+	Alert  bool         `json:"alert"`
+	Result check.Result `json:"result"`
 
 	// Downtime is set on EventUp: how long the incident lasted.
-	Downtime time.Duration
+	Downtime time.Duration `json:"downtime,omitempty"`
 	// Failures and Window are set on EventUnstable.
-	Failures int
-	Window   int
+	Failures int `json:"failures,omitempty"`
+	Window   int `json:"window,omitempty"`
+
+	// Summary is set on EventSummary: what the outbox folded together rather
+	// than drop when the queue filled up.
+	Summary *Summary `json:"summary,omitempty"`
 }
 
 // Machine turns a stream of results into confirmed states and events. It is

@@ -53,6 +53,11 @@ type Snapshot struct {
 	Version   int                   `json:"version"`
 	UpdatedAt time.Time             `json:"updated_at,omitzero"`
 	Checks    map[string]CheckState `json:"checks"`
+	// Outbox is the undelivered alert queue. It lives in this file so a state
+	// change and the notification it must produce are persisted together:
+	// surviving a restart with "already down" and no queued alert is the
+	// failure SPEC §1.1 exists to prevent.
+	Outbox Outbox `json:"outbox"`
 }
 
 // Store reads and writes the durable state file.
