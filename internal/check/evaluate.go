@@ -171,9 +171,10 @@ func render(v any) string {
 }
 
 // Sample returns the leading bytes of a body for alert context, cut at a rune
-// boundary so the text stays printable.
+// boundary so the text stays printable. Secrets are stripped before the cut
+// so a token that starts in the first 200 bytes cannot leak as a prefix.
 func Sample(body []byte, limit int) string {
-	return truncate(string(body), limit)
+	return truncate(RedactSecrets(string(body)), limit)
 }
 
 func truncate(s string, limit int) string {
