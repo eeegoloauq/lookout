@@ -1,23 +1,40 @@
 name: ci
 
+# Checks run on main and on demand. A single-slot runner cannot afford a
+# full matrix on every branch push, and a monitor's CI is not the thing
+# that should keep the runner busy.
 on:
   push:
-  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  check:
+    runs-on: docker
+    container:
+      image: golang:1.26-bookworm
+      # Persistent module and build caches. Without them every run
+      # re-downloads the toolchain's dependencies through the egress
+      # proxy, which is both slow and enough to fill a small runner disk.
+      options: -v ci-go-mod:/go/pkg/mod -v ci-go-build:/root/.cache/go-build
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+      # The golang image has no node, so the JS-based actions/checkout
+      # cannot run. A plain shell checkout of the pushed ref costs less
+      # than pulling a second image to host an action.
+      - name: checkout
+        run: |
+          git init -q .
+          git config --global --add safe.directory "$PWD"
+          git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git -c http.extraheader="Authorization: Basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)" \
+            fetch -q --depth 1 origin "+${{ github.ref }}:refs/ci"
+          git checkout -q refs/ci
       - name: vet
         run: go vet ./...
       - name: staticcheck
-        run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
-          "$(go env GOPATH)/bin/staticcheck" ./...
+        # go run keeps the pinned version in the shared module cache
+        # instead of compiling a binary into a throwaway container layer.
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
       - name: test
         run: go test -race ./...
       - name: build
