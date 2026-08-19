@@ -111,8 +111,12 @@ func (r *Ring) Uptime(since time.Time) (ratio float64, samples int) {
 		if p.At.Before(since) {
 			continue
 		}
+		if p.Outcome == check.OutcomeUnknown {
+			// A missed lookup is not a sample of availability.
+			continue
+		}
 		samples++
-		if !p.Outcome.Failed() {
+		if p.Outcome.Succeeded() {
 			up++
 		}
 	}

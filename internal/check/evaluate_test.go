@@ -164,4 +164,57 @@ func TestOutcomeFailed(t *testing.T) {
 	if !OutcomeDown.Failed() || !OutcomeMalformed.Failed() {
 		t.Error("down and malformed must both count as failures")
 	}
+	if OutcomeUnknown.Failed() {
+		t.Error("unknown must not count as a failure: a missed lookup is not an outage")
+	}
+	if OutcomeUnknown.Succeeded() {
+		t.Error("unknown is not a success either")
+	}
+}
+
+func TestEvaluateDNS(t *testing.T) {
+	src := `
+checks:
+  - name: MX
+    type: dns
+    host: service.example
+    query_type: MX
+    expect:
+      rcode: NOERROR
+      answers_contain: mail.service.example
+`
+	cfg, err := config.Load("config.yaml", []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp := cfg.Checks[0].Expect
+
+	outcome, fails := Evaluate(exp, Response{
+		Rcode:   "NOERROR",
+		Answers: []string{"MX 10 mail.service.example."},
+	})
+	if outcome != OutcomeUp || len(fails) != 0 {
+		t.Fatalf("healthy mx: %s %v", outcome, fails)
+	}
+
+	outcome, fails = Evaluate(exp, Response{Rcode: "SERVFAIL"})
+	if outcome != OutcomeDown {
+		t.Errorf("servfail outcome = %q", outcome)
+	}
+	got := Result{Failures: fails}.Reason()
+	if !strings.Contains(got, "rcode: want NOERROR, got SERVFAIL") {
+		t.Errorf("failures = %q", got)
+	}
+
+	outcome, fails = Evaluate(exp, Response{
+		Rcode:   "NOERROR",
+		Answers: []string{"MX 10 other.service.example."},
+	})
+	if outcome != OutcomeDown {
+		t.Errorf("wrong mx outcome = %q", outcome)
+	}
+	got = Result{Failures: fails}.Reason()
+	if !strings.Contains(got, "answers_contain") {
+		t.Errorf("failures = %q", got)
+	}
 }

@@ -21,6 +21,11 @@ type Response struct {
 	// Truncated reports that Body was cut at the read limit, so a body
 	// condition that does not match cannot be trusted to have failed.
 	Truncated bool
+
+	// DNS fields. Rcode is the canonical name (NOERROR, NXDOMAIN, …);
+	// Answers are the rendered records the probe collected.
+	Rcode   string
+	Answers []string
 }
 
 // Evaluate checks a response against the expectations of a check. It returns
@@ -63,6 +68,34 @@ func Evaluate(exp config.Expect, resp Response) (Outcome, []Failure) {
 		bodyFailures, bodyMalformed := evaluateBody(exp.Body, resp)
 		failures = append(failures, bodyFailures...)
 		malformed = malformed || bodyMalformed
+	}
+
+	if exp.Rcode != "" {
+		got := resp.Rcode
+		if got == "" {
+			got = "(no DNS response)"
+		}
+		if !strings.EqualFold(got, exp.Rcode) {
+			failures = append(failures, Failure{
+				Condition: "rcode",
+				Want:      exp.Rcode,
+				Got:       got,
+			})
+		}
+	}
+
+	if exp.AnswersContain != "" {
+		if !answersContain(resp.Answers, exp.AnswersContain) {
+			got := "not present in the DNS answers"
+			if len(resp.Answers) == 0 {
+				got = "answer section is empty"
+			}
+			failures = append(failures, Failure{
+				Condition: "answers_contain",
+				Want:      strconv.Quote(exp.AnswersContain),
+				Got:       got,
+			})
+		}
 	}
 
 	switch {
@@ -175,6 +208,19 @@ func render(v any) string {
 // so a token that starts in the first 200 bytes cannot leak as a prefix.
 func Sample(body []byte, limit int) string {
 	return truncate(RedactSecrets(string(body)), limit)
+}
+
+func answersContain(answers []string, want string) bool {
+	if want == "" {
+		return true
+	}
+	needle := strings.ToLower(want)
+	for _, a := range answers {
+		if strings.Contains(strings.ToLower(a), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func truncate(s string, limit int) string {
