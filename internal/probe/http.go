@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
@@ -80,8 +81,19 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 	}
 
 	client, slot := p.clientFor(req)
+	// The address is taken from the connection rather than resolved again:
+	// a second lookup could answer differently from the one that was used.
+	var remote string
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			if info.Conn != nil && info.Conn.RemoteAddr() != nil {
+				remote = info.Conn.RemoteAddr().String()
+			}
+		},
+	}))
 	start := time.Now()
 	resp, err := client.Do(req)
+	res.RemoteAddr = remote
 	if slot != nil {
 		if cert := slot.get(); cert != nil {
 			res.CertNotAfter = cert.NotAfter.UTC()
@@ -93,6 +105,7 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 		res.Err = transportError(err, c.Timeout)
 		return res
 	}
+	res.RemoteAddr = remote
 	defer resp.Body.Close()
 	if res.CertNotAfter.IsZero() && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		res.CertNotAfter = resp.TLS.PeerCertificates[0].NotAfter.UTC()

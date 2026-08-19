@@ -103,7 +103,14 @@ func validate(args []string, out io.Writer) error {
 	}
 
 	groups := map[string]int{}
+	written := 0
 	for _, c := range cfg.Checks {
+		if c.Implicit {
+			// Derived registrations are counted on their own line below;
+			// they are not something the operator grouped.
+			continue
+		}
+		written++
 		group := c.Group
 		if group == "" {
 			group = "(no group)"
@@ -117,7 +124,7 @@ func validate(args []string, out io.Writer) error {
 	sort.Strings(names)
 
 	fmt.Fprintf(out, "%s: %s across %s, no problems found\n",
-		path, plural(len(cfg.Checks), "check"), plural(len(groups), "group"))
+		path, plural(written, "check"), plural(len(groups), "group"))
 	for _, g := range names {
 		fmt.Fprintf(out, "  %s: %d\n", g, groups[g])
 	}
@@ -152,6 +159,19 @@ func validate(args []string, out io.Writer) error {
 			fmt.Fprintf(out, "note: %s and %s must be set for lookout run to start\n",
 				config.EnvTelegramToken, config.EnvTelegramChatID)
 		}
+	}
+
+	// The registrations lookout worked out for itself are the one part of
+	// the running configuration that is not in the file, so validate has to
+	// say them out loud.
+	var derived []string
+	for _, c := range cfg.Checks {
+		if c.Implicit && c.Type == config.TypeDomain {
+			derived = append(derived, c.Host)
+		}
+	}
+	if len(derived) > 0 {
+		fmt.Fprintf(out, "registrations watched (derived from the checks above): %s\n", strings.Join(derived, ", "))
 	}
 
 	silent := 0

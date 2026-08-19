@@ -240,6 +240,9 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 	}
 	before := e.CheckState
 
+	if r.RemoteAddr != "" {
+		e.RemoteAddr = r.RemoteAddr
+	}
 	event := Event{Check: c.Name, Group: c.Group, At: r.At, Alert: c.Alert, Result: r}
 	var events []Event
 

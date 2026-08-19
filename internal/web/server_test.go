@@ -531,7 +531,7 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"<details",
+		`class="row`,
 		"Photos",
 		"Router",
 		"UP",
@@ -708,7 +708,7 @@ func TestPageRowOpensIntoDetail(t *testing.T) {
 	feed(t, m, "Router", "DDD", now.Add(-30*time.Minute), 1500*time.Millisecond, 502)
 	body := get(t, New(m, "test"), "/").Body.String()
 	for _, want := range []string{
-		"<details",
+		`class="summary" href="#c-`,
 		"watching",
 		"down since",
 		"last failure",
@@ -925,7 +925,7 @@ checks:
 	}
 	// One sample a day cannot fill a bar of half-hour slots; drawing 47
 	// empty ones would only suggest an outage that never happened.
-	rows := strings.Split(body, "<details")
+	rows := strings.Split(body, `<div class="row`)
 	for _, row := range rows {
 		if strings.Contains(row, `class="nm">site.invalid<`) && strings.Contains(row, `class="bar"`) {
 			t.Error("a daily check should not get a 24-hour bar")
@@ -1069,5 +1069,67 @@ func TestFailedSlotTooltipSaysWhenAndHowBad(t *testing.T) {
 	}
 	if lines := strings.Count(last.Title, "\n"); lines < 3 {
 		t.Errorf("tooltip is one line, expected the window, the count and the worst:\n%s", last.Title)
+	}
+}
+
+// The page reloads itself every minute, and a reload closes a <details>
+// under whoever was reading it. Expansion lives in the URL instead, which
+// survives the reload and makes the sick check a link you can send.
+func TestOpenRowSurvivesTheReload(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test"), "/").Body.String()
+	if strings.Contains(body, "<details") || strings.Contains(body, "<summary") {
+		t.Error("still using a disclosure widget that a reload closes")
+	}
+	if !strings.Contains(body, `<div class="row up" id="c-photos"`) {
+		t.Errorf("row has no stable fragment id:\n%s", body)
+	}
+	if !strings.Contains(body, `href="#c-photos"`) {
+		t.Errorf("nothing links to the row's own fragment:\n%s", body)
+	}
+	if !strings.Contains(body, ".row:target .panel") {
+		t.Error("the open row is not driven by :target")
+	}
+	if !strings.Contains(body, `class="close" href="#"`) {
+		t.Error("an opened row cannot be closed again")
+	}
+}
+
+func TestSlugsAreStableAndSafe(t *testing.T) {
+	for name, want := range map[string]string{
+		"Photos":             "c-photos",
+		"RAG (chat backend)": "c-rag-chat-backend",
+		"example.ru":     "c-example-ru",
+		"Mail / DNS":         "c-mail-dns",
+	} {
+		if got := slug(name); got != want {
+			t.Errorf("slug(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// After a migration, "the site is up" and "the site is up on the machine I
+// thought I switched off" look identical from the outside. The address the
+// probe connected to is free — the connection knows it — and tells them
+// apart without anyone reaching for dig.
+func TestPanelShowsTheAddressItConnectedTo(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	now := time.Now()
+	var c config.Check
+	for _, ch := range m.Config().Checks {
+		if ch.Name == "Photos" {
+			c = ch
+		}
+	}
+	for i := range 2 {
+		m.Machine().Observe(c, check.Result{
+			Name: c.Name, At: now.Add(time.Duration(i) * time.Minute), Outcome: check.OutcomeUp,
+			Duration: 12 * time.Millisecond, StatusCode: 200, RemoteAddr: "203.0.113.9:443",
+		})
+	}
+	body := get(t, New(m, "test"), "/").Body.String()
+	if !strings.Contains(body, "connected") || !strings.Contains(body, "203.0.113.9:443") {
+		t.Errorf("panel does not say which address answered:\n%s", body)
 	}
 }

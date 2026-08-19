@@ -24,12 +24,12 @@ type UnmuteRequest struct {
 
 // MuteResponse is what mute/unmute return.
 type MuteResponse struct {
-	OK     bool       `json:"ok"`
-	Until  *time.Time `json:"until,omitempty"`
-	Group  string     `json:"group,omitempty"`
-	Check  string     `json:"check,omitempty"`
-	Cleared int       `json:"cleared,omitempty"`
-	Error  string     `json:"error,omitempty"`
+	OK      bool       `json:"ok"`
+	Until   *time.Time `json:"until,omitempty"`
+	Group   string     `json:"group,omitempty"`
+	Check   string     `json:"check,omitempty"`
+	Cleared int        `json:"cleared,omitempty"`
+	Error   string     `json:"error,omitempty"`
 }
 
 func (s *server) mute(w http.ResponseWriter, r *http.Request) {

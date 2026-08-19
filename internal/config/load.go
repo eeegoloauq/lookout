@@ -85,6 +85,7 @@ type fileInstability struct {
 
 type fileCheck struct {
 	Name             string            `yaml:"name"`
+	Registration     *string           `yaml:"registration"`
 	Group            string            `yaml:"group"`
 	Type             string            `yaml:"type"`
 	URL              string            `yaml:"url"`
@@ -243,6 +244,9 @@ func resolve(c *collector, raw *fileConfig) *Config {
 		}
 		cfg.Checks = append(cfg.Checks, chk)
 	}
+	// Every site implies watching the name it lives on (registration.go).
+	// Derived checks are appended last so an explicit one always wins.
+	cfg.Checks = append(cfg.Checks, derivedRegistrations(cfg.Checks, def)...)
 
 	cfg.Mute = resolveMute(c, raw.Mute, seen)
 	return cfg
@@ -636,6 +640,22 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin def
 		c.addf(path+".name", "name must be a single line")
 	}
 	chk.Group = strings.TrimSpace(rc.Group)
+
+	if rc.Registration != nil {
+		v := strings.ToLower(strings.TrimSpace(*rc.Registration))
+		switch {
+		case v == "" || v == "auto":
+			// The default: work the name out from the host.
+		case v == RegistrationOff || v == "false" || v == "no":
+			chk.Registration = RegistrationOff
+		case rc.Type == string(TypeDomain):
+			c.addf(path+".registration", "a domain check already is the registration of a name")
+		case registrable(v) == "":
+			c.addf(path+".registration", "%q is not a name a registry would know: use a registrable domain, or %q", v, RegistrationOff)
+		default:
+			chk.Registration = registrable(v)
+		}
+	}
 
 	switch rc.Type {
 	case "":

@@ -53,6 +53,10 @@ type Result struct {
 	Failures []Failure `json:"failures,omitempty"`
 	// BodySample is the first bytes of the response body, for alert context.
 	BodySample string `json:"body_sample,omitempty"`
+	// RemoteAddr is the address the probe actually connected to. It is free
+	// (the connection knows it) and it answers the question every migration
+	// raises: am I still talking to the old box?
+	RemoteAddr string `json:"remote_addr,omitempty"`
 
 	// Rcode is the DNS response code, empty when the probe was not DNS
 	// or no message arrived.

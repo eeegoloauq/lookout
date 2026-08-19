@@ -60,6 +60,11 @@ type CheckState struct {
 	// a log answers "what happened at 03:40 last night".
 	Incidents []Incident `json:"incidents,omitempty"`
 
+	// RemoteAddr is the address the last probe connected to. Kept so the
+	// page can answer "am I still talking to the old box?" after a
+	// migration, without anyone reaching for dig.
+	RemoteAddr string `json:"remote_addr,omitempty"`
+
 	// DownNoticeAt is when the operator was last told about the current
 	// incident — the DOWN alert or the latest reminder — and DownReminders
 	// how many reminders it has already produced. Both are durable for the

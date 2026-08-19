@@ -190,6 +190,15 @@ type Check struct {
 	Expect Expect
 
 	Alert            bool
+	// Registration names the domain whose expiry this check implies, or
+	// RegistrationOff to imply none. Empty means "work it out from the
+	// host", which is what almost every check wants.
+	Registration string
+	// Implicit marks a check lookout synthesised rather than one the
+	// operator wrote: the registration behind a site. It probes, alerts and
+	// is scraped like any other, but it is not a row on the board — the
+	// site it belongs to shows its expiry instead.
+	Implicit         bool
 	FailureThreshold int
 	SuccessThreshold int
 	Instability      Instability

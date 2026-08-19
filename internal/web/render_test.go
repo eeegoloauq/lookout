@@ -36,18 +36,6 @@ checks:
     group: Public Sites
     type: http
     url: https://example.com/api/health
-  - name: example.ru
-    group: Domains
-    type: domain
-    domain: example.ru
-    interval: 24h
-    success_threshold: 1
-  - name: example.dev
-    group: Domains
-    type: domain
-    domain: example.dev
-    interval: 24h
-    success_threshold: 1
 `
 
 // TestRenderDemoPage is a design tool, not an assertion: it writes the page
@@ -69,7 +57,7 @@ func TestRenderDemoPage(t *testing.T) {
 	feed(t, m, "Website", strings.Repeat("U", 1300)+strings.Repeat("UD", 70), day, 74*time.Millisecond, 200)
 	feed(t, m, "RAG (chat backend)", strings.Repeat("U", 1420)+strings.Repeat("D", 20), day, 5000*time.Millisecond, 502)
 
-	for name, days := range map[string]int{"example.ru": 11, "example.dev": 54} {
+	for name, days := range map[string]int{"example.ru": 11, "example.com": 61} {
 		var c config.Check
 		for _, ch := range m.Config().Checks {
 			if ch.Name == name {

@@ -43,6 +43,12 @@ type CheckStatus struct {
 	Host      string `json:"host,omitempty"`
 	QueryType string `json:"query_type,omitempty"`
 	Resolver  string `json:"resolver,omitempty"`
+	// RemoteAddr is the address the last probe connected to.
+	RemoteAddr string `json:"remote_addr,omitempty"`
+	// Implicit marks a check lookout derived rather than one the operator
+	// wrote — the registration behind a site. Consumers that render a list
+	// of checks should skip these: the site rows carry their facts.
+	Implicit bool `json:"implicit,omitempty"`
 	// IntervalMS is how often the check runs. A consumer needs it to know
 	// whether "no sample in the last hour" is a gap or the schedule.
 	IntervalMS int64  `json:"interval_ms,omitempty"`
@@ -334,6 +340,7 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 		Host:       c.Host,
 		QueryType:  string(c.QueryType),
 		Resolver:   c.Resolver,
+		Implicit:   c.Implicit,
 		IntervalMS: c.Interval.Milliseconds(),
 		Status:     string(status),
 		Unstable:   cs.Unstable,
@@ -355,6 +362,7 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 			out.Latency24h = lat
 		}
 	}
+	out.RemoteAddr = cs.RemoteAddr
 	for _, inc := range cs.Incidents {
 		out.Incidents = append(out.Incidents, IncidentLogView{
 			StartedAt:  inc.Start.UTC(),

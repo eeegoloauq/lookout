@@ -51,6 +51,10 @@ type pageGroup struct {
 }
 
 type pageRow struct {
+	// ID is the fragment that opens this row. Expansion lives in the URL so
+	// that the page's own reload — which closes any <details> — cannot shut
+	// a panel someone is reading.
+	ID       string
 	Name     string
 	Link     string
 	Label    string
@@ -104,6 +108,11 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	groups := map[string]*pageGroup{}
 	var order []string
 	for _, c := range doc.Checks {
+		if c.Implicit {
+			// A derived registration is not a row: the site that implied it
+			// shows its expiry, and a board of names nobody wrote is noise.
+			continue
+		}
 		row := pageRow{
 			Name:    c.Name,
 			Checked: "—",
@@ -165,6 +174,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			row.WideClass = expiryUrgency(c.DomainDaysLeft)
 		}
 		row.Badge, row.BadgeClass = registrationBadge(c)
+		row.ID = slug(c.Name)
 		row.Facts = facts(c, now, loc, row.Link != "")
 
 		name := c.Group
@@ -262,6 +272,27 @@ func expiryUrgency(days *int) string {
 	return ""
 }
 
+// slug turns a check name into a URL fragment. Check names are unique, so
+// the only thing to guard is the character set.
+func slug(name string) string {
+	var b strings.Builder
+	b.WriteString("c-")
+	dash := false
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		default:
+			if !dash {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
+}
+
 // registrationBadge warns on a site row when the name it lives on is about
 // to lapse. It stays silent the rest of the year: a badge that is always
 // there is furniture, and furniture is not read.
@@ -328,6 +359,10 @@ func facts(c CheckStatus, now time.Time, loc *time.Location, linked bool) []page
 			add("last failure", when)
 		}
 	}
+	// Which box answered. After a migration this is the difference between
+	// "the site is up" and "the site is up on the machine I thought I
+	// turned off".
+	add("connected", c.RemoteAddr)
 	if c.Type == "domain" {
 		// The uptime of a registry lookup is not the uptime of anything
 		// anyone cares about, and neither is how fast RDAP answered.
