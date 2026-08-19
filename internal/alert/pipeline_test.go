@@ -189,7 +189,7 @@ func TestBatchOfNEventsIsOneMessage(t *testing.T) {
 				t.Errorf("batch missing %q:\n%s", name, got[0])
 			}
 		}
-		if !strings.Contains(got[0], "5 checks") {
+		if !strings.Contains(got[0], "5 down") {
 			t.Errorf("batch header missing:\n%s", got[0])
 		}
 	})
@@ -209,7 +209,7 @@ func TestRecoveriesBatchTheSameWay(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("got %d messages, want 1", len(got))
 		}
-		if !strings.Contains(got[0], "UP A") || !strings.Contains(got[0], "UP B") {
+		if !strings.Contains(got[0], "A — back") || !strings.Contains(got[0], "B — back") {
 			t.Errorf("recovery batch:\n%s", got[0])
 		}
 	})
@@ -253,10 +253,10 @@ func TestSuccessfulSendIsNotRepeated(t *testing.T) {
 		if len(got) != 2 {
 			t.Fatalf("got %d messages, want 2", len(got))
 		}
-		if strings.Contains(got[1], "DOWN A") {
+		if strings.Contains(got[1], "A is down") {
 			t.Errorf("already-delivered A was sent again:\n%s", got[1])
 		}
-		if !strings.Contains(got[1], "DOWN B") {
+		if !strings.Contains(got[1], "B is down") {
 			t.Errorf("second message missing B:\n%s", got[1])
 		}
 	})

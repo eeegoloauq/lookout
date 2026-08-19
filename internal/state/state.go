@@ -47,6 +47,13 @@ type CheckState struct {
 	Unstable         bool      `json:"unstable,omitempty"`
 	UnstableNoticeAt time.Time `json:"unstable_notice_at,omitzero"`
 
+	// DownNoticeAt is when the operator was last told about the current
+	// incident — the DOWN alert or the latest reminder — and DownReminders
+	// how many reminders it has already produced. Both are durable for the
+	// same reason UnstableNoticeAt is: a restart must not re-page.
+	DownNoticeAt  time.Time `json:"down_notice_at,omitzero"`
+	DownReminders int       `json:"down_reminders,omitempty"`
+
 	// ZoneSnapshot is the last decoded DNS answer set. The first
 	// successful decode is a baseline, not a drift (SPEC §5.5).
 	ZoneSnapshot   string    `json:"zone_snapshot,omitempty"`
@@ -76,9 +83,9 @@ type CheckState struct {
 	// track the tcinet DELEGATED flag. gTLD status codes do not use it,
 	// so a missing token is only an emergency after we have seen the
 	// tcinet vocabulary (or REGISTERED without DELEGATED on first sight).
-	DomainDelegated          bool `json:"domain_delegated,omitempty"`
-	DomainDelegationKnown    bool `json:"domain_delegation_known,omitempty"`
-	DomainUndelegatedNotice  bool `json:"domain_undelegated_notice,omitempty"`
+	DomainDelegated         bool `json:"domain_delegated,omitempty"`
+	DomainDelegationKnown   bool `json:"domain_delegation_known,omitempty"`
+	DomainUndelegatedNotice bool `json:"domain_undelegated_notice,omitempty"`
 }
 
 // Snapshot is the whole durable state, as written to disk.

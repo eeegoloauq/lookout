@@ -58,6 +58,11 @@ alerting:
   # changed during the window as one message. Stops a gateway drop from
   # producing one Telegram message per check.
   batch_window: 45s
+  # An outage that is still open repeats on this schedule: the first gap is
+  # measured from the DOWN alert, each following one from the previous
+  # reminder, and the last value repeats. `reminders: []` turns reminders
+  # off and leaves state changes as the only thing that notifies.
+  reminders: [1h, 4h, 24h]
   telegram:
     # Bot token and chat id are never written here:
     #   LOOKOUT_TELEGRAM_TOKEN

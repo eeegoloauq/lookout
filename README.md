@@ -68,7 +68,9 @@ validation error rather than a silently empty header.
   queue only after the Bot API confirms delivery. Retries use exponential
   backoff; a full queue collapses into a summary instead of dropping events.
   Events that mature inside `batch_window` (default 45s) leave as one
-  message, grouped by check group. The HTTP client speaks SOCKS5 because
+  message: one emoji for the worst of them, a counting headline, one line per
+  check. An outage that stays open repeats on an escalating schedule
+  (`reminders`, default 1h/4h/then daily). The HTTP client speaks SOCKS5 because
   `api.telegram.org` is often unreachable directly. Token and chat id come
   from `LOOKOUT_TELEGRAM_TOKEN` and `LOOKOUT_TELEGRAM_CHAT_ID` — never from
   the config file.

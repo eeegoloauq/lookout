@@ -251,3 +251,92 @@ func TestDirtyOnlyOnChange(t *testing.T) {
 		t.Error("Dirty stayed set after ClearDirty")
 	}
 }
+
+// A long outage has to keep saying it is an outage. The gaps escalate so a
+// night-time failure is mentioned again in the morning without turning the
+// chat into a ticker.
+func TestStillDownRemindersFollowTheSchedule(t *testing.T) {
+	c := testCheck()
+	m := NewMachine()
+	m.SetReminders([]time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour})
+
+	if got := kinds(feed(m, c, "UUDDD")); got != "down" {
+		t.Fatalf("confirming the outage produced %q", got)
+	}
+	// Probes keep landing every interval; only the schedule may notify.
+	// Gaps are measured from the DOWN alert, which is the fifth result.
+	notice := epoch.Add(4 * c.Interval)
+	at := epoch.Add(5 * c.Interval)
+	var fired []time.Duration
+	for elapsed := time.Duration(0); elapsed <= 40*time.Hour; elapsed += c.Interval {
+		evs := m.Observe(c, check.Result{Name: c.Name, At: at.Add(elapsed), Outcome: check.OutcomeDown})
+		for _, ev := range evs {
+			if ev.Kind == EventStillDown {
+				fired = append(fired, ev.At.Sub(notice).Round(time.Minute))
+			}
+		}
+	}
+	want := []time.Duration{time.Hour, 5 * time.Hour, 29 * time.Hour}
+	if len(fired) != len(want) {
+		t.Fatalf("reminders fired at %v, want %v", fired, want)
+	}
+	for i := range want {
+		if fired[i] != want[i] {
+			t.Fatalf("reminders fired at %v, want %v", fired, want)
+		}
+	}
+}
+
+func TestNoRemindersWithoutASchedule(t *testing.T) {
+	c := testCheck()
+	m := NewMachine()
+	feed(m, c, "UUDDD")
+	for i := range 200 {
+		at := epoch.Add(time.Duration(5+i) * c.Interval)
+		for _, ev := range m.Observe(c, check.Result{Name: c.Name, At: at, Outcome: check.OutcomeDown}) {
+			if ev.Kind == EventStillDown {
+				t.Fatalf("reminder fired with no schedule configured")
+			}
+		}
+	}
+}
+
+// "Still down" about a check that just answered would be a lie, and the
+// recovery clears the incident's reminder state so the next outage starts
+// its schedule from scratch.
+func TestReminderStopsAtRecovery(t *testing.T) {
+	c := testCheck()
+	m := NewMachine()
+	m.SetReminders([]time.Duration{time.Hour})
+	feed(m, c, "UUDDD")
+
+	at := epoch.Add(5 * c.Interval)
+	if evs := m.Observe(c, check.Result{Name: c.Name, At: at.Add(2 * time.Hour), Outcome: check.OutcomeUp}); kinds(evs) != "" {
+		t.Fatalf("a single success produced %q", kinds(evs))
+	}
+	evs := m.Observe(c, check.Result{Name: c.Name, At: at.Add(2*time.Hour + c.Interval), Outcome: check.OutcomeUp})
+	if kinds(evs) != "up" {
+		t.Fatalf("recovery produced %q", kinds(evs))
+	}
+	st, _ := m.State(c.Name)
+	if !st.DownNoticeAt.IsZero() || st.DownReminders != 0 {
+		t.Fatalf("recovery left reminder state behind: %+v", st)
+	}
+}
+
+// State that was lost must not page: an unknown check has never been
+// reported down, so it has nothing to remind anyone about.
+func TestReminderNeedsAReportedOutage(t *testing.T) {
+	c := testCheck()
+	m := NewMachine()
+	m.SetReminders([]time.Duration{time.Hour})
+	m.Restore(Snapshot{Checks: map[string]CheckState{c.Name: {Status: StatusDown}}})
+	for i := range 300 {
+		at := epoch.Add(time.Duration(i) * c.Interval)
+		for _, ev := range m.Observe(c, check.Result{Name: c.Name, At: at, Outcome: check.OutcomeDown}) {
+			if ev.Kind == EventStillDown {
+				t.Fatalf("restored state produced a reminder for an outage nobody was told about")
+			}
+		}
+	}
+}

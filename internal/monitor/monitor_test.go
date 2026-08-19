@@ -420,7 +420,7 @@ checks:
 		if len(got) != 1 {
 			t.Fatalf("delivered %d messages, want 1: %v", len(got), got)
 		}
-		if !strings.Contains(got[0], "DOWN Photos") {
+		if !strings.Contains(got[0], "Photos is down") {
 			t.Errorf("message = %q", got[0])
 		}
 		snap, err := state.NewStore(cfg.StateFile).Load()
@@ -471,7 +471,7 @@ checks:
 		runFor(t, New(cfg, stillDown, WithLogger(quietLogger()), WithNotifier(n)), 2*time.Minute)
 
 		got := n.got()
-		if len(got) != 1 || !strings.Contains(got[0], "DOWN Photos") {
+		if len(got) != 1 || !strings.Contains(got[0], "Photos is down") {
 			t.Fatalf("after restart: %v", got)
 		}
 		snap, err = state.NewStore(cfg.StateFile).Load()
@@ -521,7 +521,7 @@ checks:
 		// Core is not muted: the router outage must still arrive.
 		foundRouter := false
 		for _, msg := range got {
-			if strings.Contains(msg, "DOWN Router") {
+			if strings.Contains(msg, "Router is down") {
 				foundRouter = true
 			}
 		}
@@ -546,7 +546,7 @@ checks:
 		runFor(t, m2, 2*time.Minute)
 		held := false
 		for _, msg := range n2.got() {
-			if strings.Contains(msg, "MUTE ended") {
+			if strings.Contains(msg, "mute ended") {
 				held = true
 			}
 		}

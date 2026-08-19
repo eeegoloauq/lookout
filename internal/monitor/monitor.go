@@ -94,13 +94,13 @@ func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
 		}
 	}
 	m := &Monitor{
-		cfg:     cfg,
-		prober:  prober,
-		store:   state.NewStore(cfg.StateFile),
-		machine: state.NewMachine(),
-		hist:    history.New(),
-		histLog: history.NewLog(cfg.HistoryFile),
-		book:    mute.NewBook(cfg.Mute),
+		cfg:       cfg,
+		prober:    prober,
+		store:     state.NewStore(cfg.StateFile),
+		machine:   state.NewMachine(),
+		hist:      history.New(),
+		histLog:   history.NewLog(cfg.HistoryFile),
+		book:      mute.NewBook(cfg.Mute),
 		days:      map[string]state.DayAcc{},
 		wakeHolds: make(chan struct{}, 1),
 		log:       slog.Default(),
@@ -109,6 +109,7 @@ func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
 	for _, opt := range opts {
 		opt(m)
 	}
+	m.machine.SetReminders(cfg.Alerting.Reminders)
 	// Rings exist before Run so the status API can answer immediately
 	// with "no samples" rather than pretending a check is missing.
 	for _, c := range cfg.Checks {
@@ -342,6 +343,9 @@ func (m *Monitor) logEvent(ev state.Event) {
 			return
 		}
 		m.log.Warn("check is down", attrs...)
+	case state.EventStillDown:
+		attrs = append(attrs, "downtime", ev.Downtime, "reason", ev.Result.Reason())
+		m.log.Warn("check is still down", attrs...)
 	case state.EventUp:
 		attrs = append(attrs, "downtime", ev.Downtime)
 		m.log.Info("check recovered", attrs...)

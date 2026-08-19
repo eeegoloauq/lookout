@@ -15,6 +15,11 @@ type EventKind string
 const (
 	// EventDown is a confirmed outage: the failure threshold was reached.
 	EventDown EventKind = "down"
+	// EventStillDown is a reminder that a confirmed outage is still open.
+	// Without it, something that breaks at 03:00 sends one message and is
+	// never mentioned again; the escalating schedule (Reminders) is what
+	// keeps a long outage from being read once and forgotten.
+	EventStillDown EventKind = "still_down"
 	// EventUp is a confirmed recovery. It is only ever emitted for a check
 	// that this process previously confirmed as down, so state that was lost
 	// cannot produce a phantom recovery.
@@ -61,7 +66,8 @@ type Event struct {
 	Alert  bool         `json:"alert"`
 	Result check.Result `json:"result"`
 
-	// Downtime is set on EventUp: how long the incident lasted.
+	// Downtime is set on EventUp and EventStillDown: how long the incident
+	// has lasted so far.
 	Downtime time.Duration `json:"downtime,omitempty"`
 	// Failures and Window are set on EventUnstable.
 	Failures int `json:"failures,omitempty"`
@@ -105,10 +111,21 @@ type Expiry struct {
 // Machine turns a stream of results into confirmed states and events. It is
 // safe for concurrent use: probes run in their own goroutines.
 type Machine struct {
-	mu      sync.Mutex
-	checks  map[string]*entry
-	dirty   bool
-	updated time.Time
+	mu sync.Mutex
+	// reminders is the escalating gap between notices about one open
+	// incident; the last value repeats. Empty means a state change is the
+	// only thing that ever notifies.
+	reminders []time.Duration
+	checks    map[string]*entry
+	dirty     bool
+	updated   time.Time
+}
+
+// SetReminders installs the still-down schedule (config alerting.reminders).
+func (m *Machine) SetReminders(d []time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reminders = append([]time.Duration(nil), d...)
 }
 
 type entry struct {
@@ -245,6 +262,8 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 			e.Status = StatusDown
 			e.IncidentStart = e.FirstFailureAt
 			e.LastChange = r.At
+			e.DownNoticeAt = r.At
+			e.DownReminders = 0
 			// A confirmed incident supersedes any instability notice: the operator
 			// is being told about this check already.
 			e.Unstable = false
@@ -264,12 +283,17 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 				e.recent, e.seen = 0, 0
 				e.Unstable = false
 			}
+			e.DownNoticeAt = time.Time{}
+			e.DownReminders = 0
 			// StatusUnknown -> StatusUp emits nothing. Coming back from a lost
 			// state file is not a recovery: nobody was ever told about an outage.
 			e.IncidentStart = time.Time{}
 		}
 
 		if ev, ok := e.instability(c, event); ok {
+			events = append(events, ev)
+		}
+		if ev, ok := e.reminder(m.reminders, failed, event); ok {
 			events = append(events, ev)
 		}
 	}
@@ -449,6 +473,31 @@ func (e *entry) instability(c config.Check, base Event) (Event, bool) {
 	base.Kind = EventUnstable
 	base.Failures = failures
 	base.Window = min(e.seen, c.Instability.Window)
+	return base, true
+}
+
+// reminder repeats an open outage on the configured schedule. It fires only
+// for a check this process has already confirmed down and told someone about,
+// so a restart cannot turn a silent unknown into a reminder, and the first
+// gap is measured from the DOWN alert rather than from the incident start.
+func (e *entry) reminder(schedule []time.Duration, failed bool, base Event) (Event, bool) {
+	// A probe that just succeeded is a recovery in progress, not a reminder:
+	// "still down" must never be sent about a check that is answering again.
+	if !failed || len(schedule) == 0 || e.Status != StatusDown || e.DownNoticeAt.IsZero() {
+		return Event{}, false
+	}
+	i := e.DownReminders
+	if i >= len(schedule) {
+		i = len(schedule) - 1
+	}
+	gap := schedule[i]
+	if gap <= 0 || base.At.Sub(e.DownNoticeAt) < gap {
+		return Event{}, false
+	}
+	e.DownNoticeAt = base.At
+	e.DownReminders++
+	base.Kind = EventStillDown
+	base.Downtime = base.At.Sub(e.IncidentStart)
 	return base, true
 }
 

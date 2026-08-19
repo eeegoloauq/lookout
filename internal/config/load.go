@@ -35,6 +35,7 @@ type fileConfig struct {
 type fileAlerting struct {
 	Mode        *string       `yaml:"mode"`
 	BatchWindow *string       `yaml:"batch_window"`
+	Reminders   *[]string     `yaml:"reminders"`
 	Telegram    *fileTelegram `yaml:"telegram"`
 }
 
@@ -173,7 +174,7 @@ func resolve(c *collector, raw *fileConfig) *Config {
 	cfg := &Config{
 		Listen:    DefaultListen,
 		StateFile: DefaultStateFile,
-		Alerting:  Alerting{Mode: ModeTelegram, BatchWindow: DefaultBatchWindow},
+		Alerting:  Alerting{Mode: ModeTelegram, BatchWindow: DefaultBatchWindow, Reminders: DefaultReminders()},
 	}
 	if raw.Listen != nil {
 		cfg.Listen = resolveListen(c, *raw.Listen)
@@ -429,6 +430,9 @@ func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {
 			into.BatchWindow = v
 		}
 	}
+	if in.Reminders != nil {
+		into.Reminders = resolveReminders(c, *in.Reminders)
+	}
 	if in.Telegram == nil {
 		return
 	}
@@ -451,6 +455,35 @@ func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {
 	if tg.Proxy != nil {
 		into.Telegram.Proxy = resolveProxy(c, "alerting.telegram.proxy", *tg.Proxy)
 	}
+}
+
+// resolveReminders compiles alerting.reminders. An explicitly empty list is
+// the way to say "state changes only" — silence has to be asked for.
+func resolveReminders(c *collector, raw []string) []time.Duration {
+	if len(raw) == 0 {
+		return nil
+	}
+	if len(raw) > MaxReminders {
+		c.addf("alerting.reminders", "%d reminder steps is more than the %d allowed", len(raw), MaxReminders)
+		return DefaultReminders()
+	}
+	out := make([]time.Duration, 0, len(raw))
+	for i, item := range raw {
+		field := fmt.Sprintf("alerting.reminders[%d]", i)
+		v, ok := duration(c, field, item)
+		if !ok {
+			continue
+		}
+		if v < time.Minute {
+			c.addf(field, "a reminder gap of %s would page on every probe: use a minute or more", v)
+			continue
+		}
+		out = append(out, v)
+	}
+	if len(out) == 0 {
+		return DefaultReminders()
+	}
+	return out
 }
 
 func resolveListen(c *collector, raw string) string {

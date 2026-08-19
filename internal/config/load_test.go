@@ -272,6 +272,9 @@ func TestAlertingDefaultsAndOverrides(t *testing.T) {
 	if cfg.Alerting.Telegram.Proxy != "" {
 		t.Errorf("proxy = %q, want empty (direct)", cfg.Alerting.Telegram.Proxy)
 	}
+	if got := cfg.Alerting.Reminders; len(got) != 3 || got[0] != time.Hour {
+		t.Errorf("reminders = %v, want the 1h/4h/24h default", got)
+	}
 
 	cfg = mustLoad(t, minimal+`
 alerting:
@@ -290,6 +293,28 @@ alerting:
 // Alerting is on unless the config says otherwise in so many words. The
 // point is that a monitor which notifies nobody is a deliberate choice and
 // never the result of an absent section or a missing environment variable.
+// An open outage repeats on this schedule; the last step repeats forever.
+// An explicitly empty list is how an operator asks for state changes only.
+func TestRemindersOverrideAndOptOut(t *testing.T) {
+	cfg := mustLoad(t, minimal+"\nalerting:\n  reminders: [30m, 6h]\n")
+	want := []time.Duration{30 * time.Minute, 6 * time.Hour}
+	if got := cfg.Alerting.Reminders; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("reminders = %v, want %v", got, want)
+	}
+	cfg = mustLoad(t, minimal+"\nalerting:\n  reminders: []\n")
+	if got := cfg.Alerting.Reminders; len(got) != 0 {
+		t.Errorf("reminders = %v, want none", got)
+	}
+}
+
+// A gap shorter than a probe interval would page on every result.
+func TestRemindersRejectAPagingGap(t *testing.T) {
+	_, err := Load("config.yaml", []byte(minimal+"\nalerting:\n  reminders: [5s]\n"))
+	if err == nil || !strings.Contains(err.Error(), "alerting.reminders[0]") {
+		t.Fatalf("err = %v, want a complaint about the gap", err)
+	}
+}
+
 func TestAlertingModeDefaultsToTelegram(t *testing.T) {
 	if got := mustLoad(t, minimal).Alerting.Mode; got != ModeTelegram {
 		t.Errorf("mode = %q, want %q", got, ModeTelegram)
@@ -305,8 +330,8 @@ func TestAlertingCanBeTurnedOffByName(t *testing.T) {
 
 func TestAlertingModeRejectsNonsenseAndHalfConfiguration(t *testing.T) {
 	for name, src := range map[string]string{
-		"unknown mode":         minimal + "\nalerting:\n  mode: carrier-pigeon\n",
-		"none with transport":  minimal + "\nalerting:\n  mode: none\n  telegram:\n    proxy: socks5://proxy.example:1080\n",
+		"unknown mode":        minimal + "\nalerting:\n  mode: carrier-pigeon\n",
+		"none with transport": minimal + "\nalerting:\n  mode: none\n  telegram:\n    proxy: socks5://proxy.example:1080\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load("test.yaml", []byte(src)); err == nil {

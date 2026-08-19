@@ -41,6 +41,10 @@ const (
 	// reading of "LAN" as the loopback default).
 	DefaultListen = "127.0.0.1:5665"
 
+	// MaxReminders bounds the still-down schedule. A schedule longer than
+	// this is a misconfiguration, not a plan.
+	MaxReminders = 8
+
 	// MaxAdhocMute is the longest lookout mute --for will accept. A
 	// forgotten mute is how a real outage stays silent; seven days is
 	// already a vacation, not a maintenance window.
@@ -125,7 +129,19 @@ type Alerting struct {
 	// that is deliberately page-only still starts.
 	Mode        Mode
 	BatchWindow time.Duration
-	Telegram    Telegram
+	// Reminders is the escalating gap between notices about one open
+	// incident: the first value is measured from the DOWN alert, each
+	// following one from the previous reminder, and the last value repeats
+	// forever. Empty means only state changes ever notify.
+	Reminders []time.Duration
+	Telegram  Telegram
+}
+
+// DefaultReminders repeats an open outage after an hour, then four hours
+// later, then daily. An outage that starts at 03:00 is worth one more line
+// in the morning; it is not worth one every minute.
+func DefaultReminders() []time.Duration {
+	return []time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour}
 }
 
 // Mode is the alerting transport.
