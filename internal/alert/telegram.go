@@ -29,6 +29,11 @@ const (
 	// How much of Telegram's error body we keep. The token is in the URL,
 	// not the body, but a proxy or a verbose error can echo the request.
 	telegramErrBody = 200
+	// The Bot API echoes the whole sent message on success, which runs to
+	// kilobytes. The reply has to be read in full before it can be parsed;
+	// reading only as much as an error message needs made every successful
+	// send look like a failure, and the outbox redelivered it forever.
+	telegramMaxBody = 64 << 10
 )
 
 // Telegram delivers messages through the Bot API. Token and chat id come
@@ -144,12 +149,16 @@ func (t *Telegram) Notify(ctx context.Context, text string) error {
 		return fmt.Errorf("telegram sendMessage: %w", t.redactErr(err))
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, telegramErrBody+1))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, telegramMaxBody))
 	body = []byte(t.redact(string(body)))
 
 	var api sendMessageResponse
-	_ = json.Unmarshal(body, &api)
-	if resp.StatusCode == http.StatusOK && api.OK {
+	parsed := json.Unmarshal(body, &api) == nil
+	if resp.StatusCode == http.StatusOK && (api.OK || !parsed) {
+		// A 200 is the Bot API's only success signal; failures carry a 4xx.
+		// An unparsable 200 is therefore still a delivered message, and
+		// treating it as a failure would redeliver rather than lose it —
+		// the wrong way round, because the reader gets the same alert twice.
 		return nil
 	}
 	desc := strings.TrimSpace(api.Description)

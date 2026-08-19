@@ -290,3 +290,19 @@ func TestHeadlinesCarryAStatusGlyph(t *testing.T) {
 		})
 	}
 }
+
+// A failing web page answers with its HTML shell. Two hundred characters of
+// doctype and inline script crowd out the status line that actually says
+// what went wrong.
+func TestHTMLBodiesAreLeftOutOfAlerts(t *testing.T) {
+	ev := state.Event{Kind: state.EventDown, Check: "Site", Group: "Public", Alert: true,
+		Result: check.Result{Name: "Site", StatusCode: 404,
+			BodySample: `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><script>var a=1;</script>`}}
+	got := Format([]state.Event{ev})
+	if strings.Contains(got, "DOCTYPE") || strings.Contains(got, "body: ") {
+		t.Fatalf("HTML leaked into the alert:\n%s", got)
+	}
+	if !strings.Contains(got, "404") {
+		t.Fatalf("the status code must survive:\n%s", got)
+	}
+}

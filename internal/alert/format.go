@@ -201,11 +201,23 @@ func writeHTTP(b *strings.Builder, r check.Result) {
 
 func writeBody(b *strings.Builder, r check.Result) {
 	sample := oneLine(check.RedactSecrets(r.BodySample))
-	if sample == "" {
+	if sample == "" || isMarkup(sample) {
+		// A failing page answers with its whole HTML shell, and 200
+		// characters of doctype and inline script say nothing about why
+		// the check failed. The status line above already carries the
+		// diagnosis; an unreadable alert is one that gets ignored.
 		return
 	}
 	b.WriteString("\nbody: ")
 	b.WriteString(sample)
+}
+
+// isMarkup reports whether a body sample is a web page rather than an API
+// answer. Only the opening bytes matter: that is all we keep.
+func isMarkup(sample string) bool {
+	head := strings.ToLower(strings.TrimSpace(sample))
+	return strings.HasPrefix(head, "<!doctype") || strings.HasPrefix(head, "<html") ||
+		strings.HasPrefix(head, "<?xml") || strings.HasPrefix(head, "<head")
 }
 
 // glyph prefixes a headline with one status character. The text alone is

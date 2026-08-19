@@ -268,3 +268,33 @@ func socks5Relay(c net.Conn, connects *atomic.Int32) error {
 	<-done
 	return nil
 }
+
+// The Bot API answers a successful sendMessage with the entire message it
+// created, which is kilobytes long. Reading only as much as an error needs
+// and then parsing that truncated text made every delivered alert look
+// failed, so the outbox redelivered it every few seconds until someone
+// noticed the flood.
+func TestASuccessfulSendIsNotMistakenForFailure(t *testing.T) {
+	reply := `{"ok":true,"result":{"message_id":698,"from":{"id":8680975896,"is_bot":true,` +
+		`"first_name":"Alert","username":"example_bot"},"chat":{"id":-1000000000001,` +
+		`"title":"` + strings.Repeat("padding ", 60) + `","type":"supergroup"},` +
+		`"date":1755619537,"text":"` + strings.Repeat("body ", 200) + `"}}`
+	if len(reply) <= telegramErrBody {
+		t.Fatalf("fixture must be longer than the error clip (%d bytes)", telegramErrBody)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, reply)
+	}))
+	defer srv.Close()
+
+	tg, err := NewTelegram("123:secret", "-100", "")
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	tg.api = srv.URL
+	if err := tg.Notify(context.Background(), "hello"); err != nil {
+		t.Fatalf("a 200 with ok:true must be a success, got: %v", err)
+	}
+}
