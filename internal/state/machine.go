@@ -1,7 +1,9 @@
 package state
 
 import (
+	"fmt"
 	"math/bits"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,6 +250,8 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 		if failed {
 			e.ConsecutiveSuccesses = 0
 			e.ConsecutiveFailures++
+			e.LastFailureAt = r.At
+			e.LastFailureReason = failureReason(r)
 			if e.ConsecutiveFailures == 1 {
 				e.FirstFailureAt = r.At
 			}
@@ -507,4 +511,29 @@ func (e *entry) failuresInWindow(window int) int {
 		mask = ^uint64(0)
 	}
 	return bits.OnesCount64(e.recent & mask)
+}
+
+// failureReason is the short, secret-free explanation kept on the check for
+// the status page. It is bounded because it ends up in the durable state
+// file, and an API that answers with a megabyte of HTML must not grow it.
+func failureReason(r check.Result) string {
+	reason := check.RedactSecrets(r.Reason())
+	reason = strings.Join(strings.Fields(reason), " ")
+	if reason == "" {
+		// Nothing named a condition: say what did arrive, so the panel
+		// never shows a failure with an empty explanation.
+		switch {
+		case r.StatusCode > 0:
+			reason = fmt.Sprintf("HTTP %d", r.StatusCode)
+		case r.Rcode != "":
+			reason = "DNS " + r.Rcode
+		default:
+			reason = string(r.Outcome)
+		}
+	}
+	const max = 200
+	if len(reason) > max {
+		reason = reason[:max-1] + "…"
+	}
+	return reason
 }

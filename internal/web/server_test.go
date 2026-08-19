@@ -15,6 +15,7 @@ import (
 
 	"github.com/eeegoloauq/lookout/internal/check"
 	"github.com/eeegoloauq/lookout/internal/config"
+	"github.com/eeegoloauq/lookout/internal/history"
 	"github.com/eeegoloauq/lookout/internal/monitor"
 	"github.com/eeegoloauq/lookout/internal/state"
 )
@@ -362,8 +363,10 @@ checks:
 		t.Errorf("metrics missing domain gauge:\n%s", body)
 	}
 
+	// Expiry lives in the row's detail panel, spelled out rather than
+	// abbreviated into a column that is empty on most checks.
 	page := get(t, h, "/").Body.String()
-	if !strings.Contains(page, "cert ") || !strings.Contains(page, "domain ") {
+	if !strings.Contains(page, "certificate in ") || !strings.Contains(page, "registration in ") {
 		t.Errorf("status page missing expiry:\n%s", page)
 	}
 }
@@ -528,7 +531,7 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"<table",
+		"<details",
 		"Photos",
 		"Router",
 		"UP",
@@ -539,14 +542,21 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 			t.Errorf("page missing %q", want)
 		}
 	}
+	// The page must fetch nothing and run nothing. A check's own target URL
+	// is content and may appear; an element that loads it must not.
 	for _, forbidden := range []string{
 		"<script",
+		"<img",
+		"<iframe",
+		"src=",
+		"@import",
+		"url(",
 		"cdn.",
 		"fonts.googleapis",
 		"fonts.gstatic",
 		"font-awesome",
-		"http://",
-		"https://",
+		`href="http`,
+		`href='http`,
 	} {
 		if strings.Contains(strings.ToLower(body), forbidden) {
 			t.Errorf("page must not pull %q (no JS, no external assets)", forbidden)
@@ -599,7 +609,7 @@ func TestMuteAPIAndStatusVisibility(t *testing.T) {
 	}
 
 	page := get(t, h, "/").Body.String()
-	if !strings.Contains(page, "Alerts muted") || !strings.Contains(page, "MUTED") {
+	if !strings.Contains(page, "Alerts muted") || !strings.Contains(page, `class="tag">muted`) {
 		t.Errorf("status page must show the mute, got:\n%s", page)
 	}
 	metrics := get(t, h, "/metrics").Body.String()
@@ -667,4 +677,133 @@ func TestMutingIsRefusedFromTheNetwork(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("mute from loopback = %d, want %d", rec.Code, http.StatusOK)
 	}
+}
+
+// The group is a heading with air around it, not a column repeated on every
+// row: the eye should find "Services" once, not twenty-five times.
+func TestPageGroupsAreHeadings(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	feed(t, m, "Router", "UU", time.Now(), 20*time.Millisecond, 200)
+	body := get(t, New(m, "test"), "/").Body.String()
+	for _, want := range []string{"<h2>Services", "<h2>Core"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing group heading %q", want)
+		}
+	}
+	if strings.Contains(body, "<th>Group") {
+		t.Error("the group column is supposed to be gone")
+	}
+	// Two checks, two groups: each heading carries its own tally.
+	if n := strings.Count(body, "1 up"); n < 2 {
+		t.Errorf("group headings missing their counts:\n%s", body)
+	}
+}
+
+// A red row has to answer "why" without anyone opening a log: the row opens
+// into the target, the last failure, uptime, response times and a 24h bar.
+func TestPageRowOpensIntoDetail(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	now := time.Now()
+	feed(t, m, "Router", "DDD", now.Add(-30*time.Minute), 1500*time.Millisecond, 502)
+	body := get(t, New(m, "test"), "/").Body.String()
+	for _, want := range []string{
+		"<details",
+		"watching",
+		"down since",
+		"last failure",
+		"uptime",
+		"response",
+		`<div class="bar">`,
+		"24h ago",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("detail panel missing %q:\n%s", want, body)
+		}
+	}
+	// How long it has been down belongs next to the word DOWN, not in a
+	// column that is empty on every healthy row.
+	if !strings.Contains(body, "for 30m") {
+		t.Errorf("outage duration missing from the row:\n%s", body)
+	}
+}
+
+func TestTimelineMarksTheFailedSlots(t *testing.T) {
+	now := time.Now()
+	var points []history.Point
+	for i := range 48 {
+		at := now.Add(-history.Retention).Add(time.Duration(i) * 30 * time.Minute)
+		outcome := check.OutcomeUp
+		if i == 10 {
+			outcome = check.OutcomeDown
+		}
+		points = append(points, history.Point{At: at, Outcome: outcome, Duration: 10 * time.Millisecond})
+	}
+	buckets := timeline(points, now)
+	if len(buckets) != timelineBuckets {
+		t.Fatalf("got %d buckets, want %d", len(buckets), timelineBuckets)
+	}
+	bad := 0
+	for _, b := range buckets {
+		if b.Class == "b" {
+			bad++
+		}
+	}
+	if bad != 1 {
+		t.Errorf("got %d failed slots, want exactly the one that failed", bad)
+	}
+}
+
+// The median says what normal feels like; p95 and the worst sample say what
+// the tail costs. A single average would hide both.
+func TestLatencyPercentiles(t *testing.T) {
+	now := time.Now()
+	var points []history.Point
+	for i := 1; i <= 100; i++ {
+		points = append(points, history.Point{
+			At: now, Outcome: check.OutcomeUp, Duration: time.Duration(i) * time.Millisecond,
+		})
+	}
+	// A probe that never got an answer would contribute the timeout, which
+	// describes the configuration and not the service.
+	points = append(points, history.Point{At: now, Outcome: check.OutcomeUnknown, Duration: 30 * time.Second})
+	got := latency(points)
+	if got == nil {
+		t.Fatal("no latency view")
+	}
+	if got.P50MS != 50 || got.P95MS != 95 || got.MaxMS != 100 || got.Samples != 100 {
+		t.Errorf("latency = %+v, want p50 50, p95 95, max 100 over 100 samples", got)
+	}
+	if latency(nil) != nil {
+		t.Error("no samples must produce no view, not zeros")
+	}
+}
+
+// Why it broke outlives the outage: the answer is still there after the
+// check recovers, which is when someone usually gets around to asking.
+func TestLastFailureSurvivesRecovery(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	now := time.Now()
+	feed(t, m, "Photos", "DDDUU", now.Add(-10*time.Minute), 20*time.Millisecond, 503)
+
+	var doc StatusDocument
+	if err := json.Unmarshal(get(t, New(m, "test"), "/api/status").Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, c := range doc.Checks {
+		if c.Name != "Photos" {
+			continue
+		}
+		if c.Status != string(state.StatusUp) {
+			t.Fatalf("Photos = %q, expected it to have recovered", c.Status)
+		}
+		if c.LastFailure == nil {
+			t.Fatal("the last failure is gone the moment it recovers")
+		}
+		if !strings.Contains(c.LastFailure.Reason, "503") {
+			t.Errorf("last failure reason = %q, want the status it answered with", c.LastFailure.Reason)
+		}
+		return
+	}
+	t.Fatal("Photos missing from the status document")
 }

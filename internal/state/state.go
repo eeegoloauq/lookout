@@ -47,6 +47,13 @@ type CheckState struct {
 	Unstable         bool      `json:"unstable,omitempty"`
 	UnstableNoticeAt time.Time `json:"unstable_notice_at,omitzero"`
 
+	// LastFailureAt and LastFailureReason are the most recent failing
+	// probe and why it failed, kept so the status page can answer "why is
+	// it down" without the operator going to the logs. Durable because a
+	// restart during an outage is exactly when that question is asked.
+	LastFailureAt     time.Time `json:"last_failure_at,omitzero"`
+	LastFailureReason string    `json:"last_failure_reason,omitempty"`
+
 	// DownNoticeAt is when the operator was last told about the current
 	// incident — the DOWN alert or the latest reminder — and DownReminders
 	// how many reminders it has already produced. Both are durable for the

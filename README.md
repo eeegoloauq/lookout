@@ -33,7 +33,7 @@ lookout unmute
 
 `lookout run` listens on `listen` in the config (default `127.0.0.1:5665`):
 
-- `GET /` — status page: one HTML table, no JavaScript, no external assets
+- `GET /` — status page: one HTML list, no JavaScript, no external assets
 - `GET /api/status` — JSON of every check (versioned; this is the public contract)
 - `GET /api/checks/<name>` — recent probe history from the in-memory ring
 - `GET /metrics` — Prometheus text format
@@ -75,7 +75,12 @@ validation error rather than a silently empty header.
   from `LOOKOUT_TELEGRAM_TOKEN` and `LOOKOUT_TELEGRAM_CHAT_ID` — never from
   the config file.
 
-- **A status page and JSON API** on loopback by default. `/api/status` is
+- **A status page** that is a board, not a dashboard: groups as headings, one
+  line per check, and every line opens into what it watches, why it last
+  failed, uptime over 24h/7d/30d, median/p95/worst response time and a
+  24-hour bar. No JavaScript and no external asset; it reloads itself once a
+  minute.
+- **A JSON API** on loopback by default. `/api/status` is
   versioned in the body (`version: 1`) so a separate start page can consume
   it. `/healthz` is 503 when the alert outbox has failed several deliveries:
   a monitor that cannot notify must look sick from the outside.

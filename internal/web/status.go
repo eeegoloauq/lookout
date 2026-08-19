@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/eeegoloauq/lookout/internal/check"
@@ -68,6 +69,14 @@ type CheckStatus struct {
 	// still run; only delivery is suppressed.
 	Muted bool `json:"muted"`
 
+	// Latency24h is the response-time shape over the in-memory window.
+	// The median says what normal feels like, p95 and the worst sample
+	// say what the slow tail costs — one number could not do both.
+	Latency24h *LatencyView `json:"latency_24h"`
+	// LastFailure is the most recent failing probe and why, even after
+	// the check recovered. Null until something has failed once.
+	LastFailure *FailureView `json:"last_failure"`
+
 	// Uptime7d / Uptime30d come from the JSONL history plus today.
 	// Null when there are no samples, never 100% by omission.
 	Uptime7d  *UptimeView `json:"uptime_7d"`
@@ -86,6 +95,20 @@ type ProbeView struct {
 type UptimeView struct {
 	Ratio   float64 `json:"ratio"`
 	Samples int     `json:"samples"`
+}
+
+// LatencyView is the response-time distribution over the last 24 hours.
+type LatencyView struct {
+	P50MS   int64 `json:"p50_ms"`
+	P95MS   int64 `json:"p95_ms"`
+	MaxMS   int64 `json:"max_ms"`
+	Samples int   `json:"samples"`
+}
+
+// FailureView is the last failing probe of a check.
+type FailureView struct {
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason,omitempty"`
 }
 
 // IncidentView is the current confirmed outage, if any.
@@ -160,6 +183,38 @@ func (s *server) snapshot(now time.Time) StatusDocument {
 	}
 }
 
+// latency summarises a ring of points. Probes that never got a response
+// are left out: their duration is the timeout, which would describe the
+// configuration rather than the service.
+func latency(points []history.Point) *LatencyView {
+	ms := make([]int64, 0, len(points))
+	for _, p := range points {
+		if p.Outcome == check.OutcomeUnknown || p.Duration <= 0 {
+			continue
+		}
+		ms = append(ms, p.Duration.Milliseconds())
+	}
+	if len(ms) == 0 {
+		return nil
+	}
+	sort.Slice(ms, func(i, j int) bool { return ms[i] < ms[j] })
+	return &LatencyView{
+		P50MS:   percentile(ms, 50),
+		P95MS:   percentile(ms, 95),
+		MaxMS:   ms[len(ms)-1],
+		Samples: len(ms),
+	}
+}
+
+// percentile is the nearest-rank percentile of a sorted slice.
+func percentile(sorted []int64, p int) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	i := (p*len(sorted) + 99) / 100
+	return sorted[min(max(i, 1), len(sorted))-1]
+}
+
 func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 	cs, _ := s.mon.Machine().State(c.Name)
 	status := cs.Status
@@ -187,6 +242,12 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 		if samples > 0 {
 			out.Uptime24h = &UptimeView{Ratio: ratio, Samples: samples}
 		}
+		if lat := latency(ring.Points()); lat != nil {
+			out.Latency24h = lat
+		}
+	}
+	if !cs.LastFailureAt.IsZero() {
+		out.LastFailure = &FailureView{At: cs.LastFailureAt.UTC(), Reason: cs.LastFailureReason}
 	}
 	if ratio, samples := s.mon.UptimeDays(c.Name, 7, now); samples > 0 {
 		out.Uptime7d = &UptimeView{Ratio: ratio, Samples: samples}

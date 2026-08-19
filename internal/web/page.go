@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/eeegoloauq/lookout/internal/history"
 	"github.com/eeegoloauq/lookout/internal/state"
 )
 
@@ -19,27 +20,57 @@ var pageCSS string
 
 var pageTmpl = template.Must(template.New("page").Parse(pageHTML))
 
+// timelineBuckets is how many slots the 24-hour bar is cut into: 48 half
+// hours. Fewer hides a short outage inside a green block; more turns into
+// a texture nobody can point at.
+const timelineBuckets = 48
+
 type pageView struct {
 	Title    string
+	Version  string
 	CSS      template.CSS
 	Tally    string
 	When     string
 	Degraded string
 	Muted    string
-	Checks   []pageRow
+	Groups   []pageGroup
+	Empty    bool
+}
+
+// pageGroup is one config group, rendered as a heading rather than as a
+// column repeated on every row.
+type pageGroup struct {
+	Name  string
+	Note  string
+	Rows  []pageRow
+	Bad   bool
+	Empty bool
 }
 
 type pageRow struct {
 	Name     string
-	Group    string
 	Label    string
 	RowClass string
+	Note     string // what the status line adds: "12m", "5 of 20 failed"
 	Checked  string
 	Latency  string
 	Uptime   string
-	Expiry   string
-	Incident string
 	Muted    bool
+	Timeline []pageBucket
+	Facts    []pageFact
+}
+
+// pageFact is one line of the expanded panel. A slice, not a struct with
+// twenty optional fields: the panel shows what a check actually has.
+type pageFact struct {
+	Label string
+	Value string
+}
+
+// pageBucket is one slot of the 24-hour bar.
+type pageBucket struct {
+	Class string
+	Title string
 }
 
 func (s *server) page(w http.ResponseWriter, _ *http.Request) {
@@ -48,16 +79,14 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	health, _ := s.health(now)
 
 	up, down, unknown, unstable := 0, 0, 0, 0
-	rows := make([]pageRow, 0, len(doc.Checks))
+	groups := map[string]*pageGroup{}
+	var order []string
 	for _, c := range doc.Checks {
 		row := pageRow{
-			Name:     c.Name,
-			Group:    c.Group,
-			Checked:  "—",
-			Latency:  "—",
-			Uptime:   "—",
-			Expiry:   "—",
-			Incident: "—",
+			Name:    c.Name,
+			Checked: "—",
+			Latency: "—",
+			Uptime:  "—",
 		}
 		switch {
 		case c.Status == string(state.StatusDown):
@@ -73,35 +102,58 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			row.Label, row.RowClass = "UNKNOWN", "unknown"
 			unknown++
 		}
+		if c.Incident != nil {
+			// How long it has been down belongs next to the word DOWN, not
+			// in a column that is empty on every healthy row.
+			row.Note = "for " + formatSpan(time.Duration(c.Incident.DurationMS)*time.Millisecond)
+		}
 		if c.LastProbe != nil {
 			row.Checked = formatAgo(now, c.LastProbe.At)
 			row.Latency = formatLatency(time.Duration(c.LastProbe.DurationMS) * time.Millisecond)
 		}
 		if c.Uptime24h != nil {
-			row.Uptime = fmt.Sprintf("%.1f%%", c.Uptime24h.Ratio*100)
+			row.Uptime = formatRatio(c.Uptime24h.Ratio)
 		}
-		if c.Incident != nil {
-			row.Incident = formatSpan(time.Duration(c.Incident.DurationMS) * time.Millisecond)
-		}
-		row.Expiry = formatExpiry(c)
 		row.Muted = c.Muted
 		if c.Muted {
 			row.RowClass += " muted"
 		}
-		rows = append(rows, row)
-	}
+		if ring, ok := s.mon.History().Ring(c.Name); ok {
+			row.Timeline = timeline(ring.Points(), now)
+		}
+		row.Facts = facts(c, now)
 
-	title := "lookout"
-	if down > 0 {
-		title = fmt.Sprintf("lookout — %s down", plural(down, "check"))
+		name := c.Group
+		if name == "" {
+			name = "Ungrouped"
+		}
+		g, ok := groups[name]
+		if !ok {
+			g = &pageGroup{Name: name}
+			groups[name] = g
+			order = append(order, name)
+		}
+		if row.RowClass != "up" && !c.Muted {
+			g.Bad = true
+		}
+		g.Rows = append(g.Rows, row)
 	}
 
 	view := pageView{
-		Title:  title,
-		CSS:    template.CSS(pageCSS),
-		Tally:  tally(up, down, unknown, unstable),
-		When:   now.UTC().Format("15:04:05 UTC"),
-		Checks: rows,
+		Title:   "lookout",
+		Version: s.version,
+		CSS:     template.CSS(pageCSS),
+		Tally:   tally(up, down, unknown, unstable),
+		When:    now.UTC().Format("15:04:05 UTC"),
+		Empty:   len(doc.Checks) == 0,
+	}
+	if down > 0 {
+		view.Title = fmt.Sprintf("lookout — %s down", plural(down, "check"))
+	}
+	for _, name := range order {
+		g := groups[name]
+		g.Note = groupNote(g.Rows)
+		view.Groups = append(view.Groups, *g)
 	}
 	if health.Status == "degraded" {
 		view.Degraded = health.Reason
@@ -120,6 +172,170 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(buf.Bytes())
 }
 
+// facts is the expanded panel: what the check watches, how it has behaved,
+// and what runs out. Absent data produces no line at all — an empty field
+// is a question the reader has to answer for themselves.
+func facts(c CheckStatus, now time.Time) []pageFact {
+	var out []pageFact
+	add := func(label, value string) {
+		if value != "" {
+			out = append(out, pageFact{Label: label, Value: value})
+		}
+	}
+	add("watching", target(c))
+	if c.Incident != nil {
+		add("down since", c.Incident.StartedAt.Format("2006-01-02 15:04 UTC"))
+	}
+	if c.LastFailure != nil {
+		when := formatAgo(now, c.LastFailure.At)
+		if c.LastFailure.Reason != "" {
+			add("last failure", when+" · "+c.LastFailure.Reason)
+		} else {
+			add("last failure", when)
+		}
+	}
+	add("uptime", uptimeLine(c))
+	add("response", latencyLine(c.Latency24h))
+	if e := expiryLine(c); e != "" {
+		add("expires", e)
+	}
+	if c.DomainState != "" {
+		add("registry", c.DomainState)
+	}
+	return out
+}
+
+func target(c CheckStatus) string {
+	if c.URL != "" {
+		return c.URL
+	}
+	return ""
+}
+
+func uptimeLine(c CheckStatus) string {
+	parts := make([]string, 0, 3)
+	if c.Uptime24h != nil {
+		parts = append(parts, formatRatio(c.Uptime24h.Ratio)+" 24h")
+	}
+	if c.Uptime7d != nil {
+		parts = append(parts, formatRatio(c.Uptime7d.Ratio)+" 7d")
+	}
+	if c.Uptime30d != nil {
+		parts = append(parts, formatRatio(c.Uptime30d.Ratio)+" 30d")
+	}
+	return join(parts, " · ")
+}
+
+func latencyLine(l *LatencyView) string {
+	if l == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s median · %s p95 · %s worst (24h)",
+		formatLatency(time.Duration(l.P50MS)*time.Millisecond),
+		formatLatency(time.Duration(l.P95MS)*time.Millisecond),
+		formatLatency(time.Duration(l.MaxMS)*time.Millisecond))
+}
+
+func expiryLine(c CheckStatus) string {
+	var parts []string
+	if c.CertDaysLeft != nil {
+		s := "certificate in " + formatDays(*c.CertDaysLeft)
+		if c.CertNotAfter != nil {
+			s += " (" + c.CertNotAfter.Format("2 Jan 2006") + ")"
+		}
+		parts = append(parts, s)
+	}
+	if c.DomainDaysLeft != nil {
+		s := "registration in " + formatDays(*c.DomainDaysLeft)
+		if c.DomainExpires != nil {
+			s += " (" + c.DomainExpires.Format("2 Jan 2006") + ")"
+		}
+		parts = append(parts, s)
+	}
+	if c.DomainLookupUnknown {
+		parts = append(parts, "registry has not answered")
+	}
+	return join(parts, " · ")
+}
+
+// timeline folds the ring into fixed half-hour slots. A slot with any
+// failure is drawn as failing: an outage that ended must stay visible,
+// which is the whole reason to look at a bar instead of a number.
+func timeline(points []history.Point, now time.Time) []pageBucket {
+	slot := history.Retention / timelineBuckets
+	start := now.Add(-history.Retention).Truncate(slot)
+	type acc struct{ ok, bad int }
+	buckets := make([]acc, timelineBuckets)
+	for _, p := range points {
+		if p.Outcome == "unknown" || p.At.Before(start) {
+			continue
+		}
+		i := int(p.At.Sub(start) / slot)
+		if i < 0 || i >= timelineBuckets {
+			continue
+		}
+		if p.Outcome.Succeeded() {
+			buckets[i].ok++
+		} else {
+			buckets[i].bad++
+		}
+	}
+	out := make([]pageBucket, timelineBuckets)
+	for i, b := range buckets {
+		from := start.Add(time.Duration(i) * slot).UTC()
+		switch {
+		case b.bad > 0 && b.ok == 0:
+			out[i] = pageBucket{Class: "b", Title: fmt.Sprintf("%s · %d failed", from.Format("15:04"), b.bad)}
+		case b.bad > 0:
+			out[i] = pageBucket{Class: "p", Title: fmt.Sprintf("%s · %d of %d failed", from.Format("15:04"), b.bad, b.ok+b.bad)}
+		case b.ok > 0:
+			out[i] = pageBucket{Class: "o"}
+		default:
+			out[i] = pageBucket{Class: "n", Title: from.Format("15:04") + " · no data"}
+		}
+	}
+	return out
+}
+
+// groupNote is the count beside a group heading: what is wrong, or how
+// many checks are fine.
+func groupNote(rows []pageRow) string {
+	counts := map[string]int{}
+	for _, r := range rows {
+		switch {
+		case r.Label == "DOWN":
+			counts["down"]++
+		case r.Label == "UNSTABLE":
+			counts["unstable"]++
+		case r.Label == "UNKNOWN":
+			counts["unknown"]++
+		default:
+			counts["up"]++
+		}
+	}
+	var parts []string
+	for _, k := range []string{"down", "unstable", "unknown"} {
+		if counts[k] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[k], k))
+		}
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("%d up", counts["up"])
+	}
+	return join(parts, " · ")
+}
+
+func join(parts []string, sep string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	out := parts[0]
+	for _, p := range parts[1:] {
+		out += sep + p
+	}
+	return out
+}
+
 func tally(up, down, unknown, unstable int) string {
 	parts := make([]string, 0, 4)
 	if down > 0 {
@@ -134,11 +350,17 @@ func tally(up, down, unknown, unstable int) string {
 	if up > 0 || len(parts) == 0 {
 		parts = append(parts, fmt.Sprintf("%d up", up))
 	}
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += " · " + p
+	return join(parts, " · ")
+}
+
+func formatRatio(r float64) string {
+	pct := r * 100
+	// 99.97% rounded to one decimal is 100.0%, which reads as "nothing
+	// ever failed" on a day that had an outage.
+	if pct < 100 && pct > 99.9 {
+		return "99.9%"
 	}
-	return out
+	return fmt.Sprintf("%.1f%%", pct)
 }
 
 func formatAgo(now, at time.Time) string {
@@ -192,36 +414,17 @@ func formatMutes(mutes []MuteView, now time.Time) string {
 		}
 		parts = append(parts, fmt.Sprintf("%s until %s (%s left)", scope, m.Until.UTC().Format("15:04 UTC"), formatSpan(left)))
 	}
-	out := "Alerts muted: " + parts[0]
-	for _, p := range parts[1:] {
-		out += " · " + p
-	}
-	return out
-}
-
-func formatExpiry(c CheckStatus) string {
-	switch {
-	case c.CertDaysLeft != nil && c.DomainDaysLeft != nil:
-		return fmt.Sprintf("cert %s · domain %s", formatDays(*c.CertDaysLeft), formatDays(*c.DomainDaysLeft))
-	case c.CertDaysLeft != nil:
-		return "cert " + formatDays(*c.CertDaysLeft)
-	case c.DomainDaysLeft != nil:
-		return "domain " + formatDays(*c.DomainDaysLeft)
-	case c.DomainLookupUnknown:
-		return "registry ?"
-	default:
-		return "—"
-	}
+	return "Alerts muted: " + join(parts, " · ")
 }
 
 func formatDays(n int) string {
 	switch {
 	case n < 0:
-		return fmt.Sprintf("%dd ago", -n)
+		return fmt.Sprintf("%s ago", plural(-n, "day"))
 	case n == 0:
-		return "<1d"
+		return "under a day"
 	default:
-		return fmt.Sprintf("%dd", n)
+		return plural(n, "day")
 	}
 }
 
