@@ -16,7 +16,17 @@ type StatusDocument struct {
 	Version     int           `json:"version"`
 	Build       string        `json:"build,omitempty"`
 	GeneratedAt time.Time     `json:"generated_at"`
+	Mutes       []MuteView    `json:"mutes,omitempty"`
 	Checks      []CheckStatus `json:"checks"`
+}
+
+// MuteView is one currently active quiet window.
+type MuteView struct {
+	Until  time.Time `json:"until"`
+	Group  string    `json:"group,omitempty"`
+	Check  string    `json:"check,omitempty"`
+	Source string    `json:"source"`
+	Held   int       `json:"held,omitempty"`
 }
 
 // CheckStatus is one check as a foreign consumer should see it.
@@ -50,6 +60,18 @@ type CheckStatus struct {
 	// DomainLookupUnknown is true while the registry has not answered
 	// since DomainUnknownSince — not the same as a down domain.
 	DomainLookupUnknown bool `json:"domain_lookup_unknown,omitempty"`
+	// DomainDelegated is null when the registry vocabulary has no
+	// DELEGATED flag (gTLDs). False is "we saw it and it is gone".
+	DomainDelegated *bool `json:"domain_delegated,omitempty"`
+
+	// Muted is true while a quiet window covers this check. Probes
+	// still run; only delivery is suppressed.
+	Muted bool `json:"muted"`
+
+	// Uptime7d / Uptime30d come from the JSONL history plus today.
+	// Null when there are no samples, never 100% by omission.
+	Uptime7d  *UptimeView `json:"uptime_7d"`
+	Uptime30d *UptimeView `json:"uptime_30d"`
 }
 
 // ProbeView is the most recent probe of a check.
@@ -119,10 +141,21 @@ func (s *server) snapshot(now time.Time) StatusDocument {
 	for _, c := range cfg.Checks {
 		checks = append(checks, s.checkStatus(c, now))
 	}
+	var mutes []MuteView
+	for _, v := range s.mon.Mutes(now) {
+		mutes = append(mutes, MuteView{
+			Until:  v.Until.UTC(),
+			Group:  v.Group,
+			Check:  v.Check,
+			Source: v.Source,
+			Held:   v.Held,
+		})
+	}
 	return StatusDocument{
 		Version:     APIVersion,
 		Build:       s.version,
 		GeneratedAt: now.UTC(),
+		Mutes:       mutes,
 		Checks:      checks,
 	}
 }
@@ -155,6 +188,13 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 			out.Uptime24h = &UptimeView{Ratio: ratio, Samples: samples}
 		}
 	}
+	if ratio, samples := s.mon.UptimeDays(c.Name, 7, now); samples > 0 {
+		out.Uptime7d = &UptimeView{Ratio: ratio, Samples: samples}
+	}
+	if ratio, samples := s.mon.UptimeDays(c.Name, 30, now); samples > 0 {
+		out.Uptime30d = &UptimeView{Ratio: ratio, Samples: samples}
+	}
+	out.Muted = s.mon.CheckMuted(c.Group, c.Name, now)
 	if status == state.StatusDown && !cs.IncidentStart.IsZero() {
 		out.Incident = &IncidentView{
 			StartedAt:  cs.IncidentStart.UTC(),
@@ -179,6 +219,10 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 		out.DomainSource = cs.DomainSource
 	}
 	out.DomainLookupUnknown = !cs.DomainUnknownSince.IsZero()
+	if cs.DomainDelegationKnown {
+		d := cs.DomainDelegated
+		out.DomainDelegated = &d
+	}
 	return out
 }
 

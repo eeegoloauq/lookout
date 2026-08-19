@@ -179,6 +179,69 @@ func mergeSummary(items []OutboxItem) *Summary {
 	return s
 }
 
+// Absorb records one event into a digest. Used by mute holds so a
+// suppressed alert is counted rather than dropped.
+func (s *Summary) Absorb(ev Event, at time.Time) {
+	if s.ByKind == nil {
+		s.ByKind = map[string]int{}
+	}
+	if s.ByGroup == nil {
+		s.ByGroup = map[string]int{}
+	}
+	if ev.Kind == EventSummary || ev.Kind == EventHeld {
+		if ev.Summary != nil {
+			s.add(ev.Summary)
+			for _, name := range ev.Summary.Checks {
+				s.addCheck(name)
+			}
+		}
+		return
+	}
+	s.Count++
+	s.ByKind[string(ev.Kind)]++
+	group := ev.Group
+	if group == "" {
+		group = "other"
+	}
+	s.ByGroup[group]++
+	if ev.Check != "" {
+		s.addCheck(ev.Check)
+	}
+	if at.IsZero() {
+		at = ev.At
+	}
+	if s.From.IsZero() || (!at.IsZero() && at.Before(s.From)) {
+		s.From = at
+	}
+	if at.After(s.To) {
+		s.To = at
+	}
+}
+
+// Clone is a deep copy, safe to persist or hand to another holder.
+func (s *Summary) Clone() *Summary { return s.clone() }
+
+// Merge folds another digest into s.
+func (s *Summary) Merge(other *Summary) {
+	if other == nil {
+		return
+	}
+	s.add(other)
+	for _, name := range other.Checks {
+		s.addCheck(name)
+	}
+}
+
+func (s *Summary) addCheck(name string) {
+	for _, n := range s.Checks {
+		if n == name {
+			return
+		}
+	}
+	s.Checks = append(s.Checks, name)
+	sort.Strings(s.Checks)
+}
+
 func (s *Summary) add(other *Summary) {
 	if other == nil {
 		return

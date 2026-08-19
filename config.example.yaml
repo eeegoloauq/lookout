@@ -7,18 +7,31 @@
 #   lookout validate config.yaml    # checks everything before the process starts
 #   lookout run config.yaml
 #
+# Recurring quiet windows (SPEC §8). Probes keep running; only delivery
+# is suppressed. every: omitted means every day. Timezone defaults to UTC.
+# Ad-hoc mutes: lookout mute --for 30m --group Public
+mute:
+  - every: [Saturday, Sunday]
+    at: "02:00"
+    duration: 3h
+    timezone: UTC
+    group: Public
+
 # HTTP, DNS and domain checks. Certificate expiry is read from the HTTPS
 # handshake of an http check — there is no separate type for it.
 
 # Status page, JSON API and /metrics. Default is loopback only — the
 # page is for the machine that runs lookout, not the rest of the LAN.
 # Override to a LAN address if the start page lives on another host.
-listen: 127.0.0.1:8080
+listen: 127.0.0.1:5665
 
 state:
   # Durable state: current up/down, streak counters, incident starts.
   # Losing this file is safe — it costs history, not correctness.
   file: /var/lib/lookout/state.json
+  # One JSONL line per check per UTC day. Defaults to history.jsonl
+  # beside the state file.
+  history: /var/lib/lookout/history.jsonl
 
 defaults:
   interval: 60s

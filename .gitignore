@@ -8,3 +8,4 @@ config.yaml
 *.db-shm
 /state.json
 /live-state.json
+/history.jsonl

@@ -91,6 +91,12 @@ func formatEvent(ev state.Event) string {
 		return formatExpiry(ev)
 	case state.EventStale:
 		return formatStale(ev)
+	case state.EventUndelegated:
+		return formatUndelegated(ev)
+	case state.EventDelegated:
+		return formatDelegated(ev)
+	case state.EventHeld:
+		return formatHeld(ev)
 	default:
 		return formatDown(ev)
 	}
@@ -252,6 +258,62 @@ func formatExpiry(ev state.Event) string {
 	return b.String()
 }
 
+func formatUndelegated(ev state.Event) string {
+	var b strings.Builder
+	b.WriteString(title("UNDELEGATED", ev.Check, ev.Group))
+	b.WriteString("\ndomain is no longer delegated")
+	if ev.Result.DomainState != "" {
+		fmt.Fprintf(&b, "\nstate %s", ev.Result.DomainState)
+	}
+	if !ev.Result.DomainExpiresAt.IsZero() {
+		fmt.Fprintf(&b, "\npaid-till %s", ev.Result.DomainExpiresAt.UTC().Format("2006-01-02"))
+	}
+	return b.String()
+}
+
+func formatDelegated(ev state.Event) string {
+	var b strings.Builder
+	b.WriteString(title("DELEGATED", ev.Check, ev.Group))
+	b.WriteString("\ndomain is delegated again")
+	if ev.Result.DomainState != "" {
+		fmt.Fprintf(&b, "\nstate %s", ev.Result.DomainState)
+	}
+	return b.String()
+}
+
+func formatHeld(ev state.Event) string {
+	s := ev.Summary
+	if s == nil {
+		return glyph("MUTE") + "MUTE ended (empty)"
+	}
+	var b strings.Builder
+	scope := "all checks"
+	switch {
+	case ev.Check != "":
+		scope = ev.Check
+	case ev.Group != "":
+		scope = "group " + ev.Group
+	}
+	fmt.Fprintf(&b, "%sMUTE ended: %s held while %s was muted", glyph("MUTE"), plural(s.Count, "alert"), scope)
+	if !s.From.IsZero() && !s.To.IsZero() {
+		fmt.Fprintf(&b, "\nfrom %s to %s", s.From.UTC().Format("2006-01-02 15:04:05 UTC"), s.To.UTC().Format("2006-01-02 15:04:05 UTC"))
+	}
+	if line := countLine(s.ByKind); line != "" {
+		b.WriteString("\n")
+		b.WriteString(line)
+	}
+	if len(s.Checks) > 0 {
+		names := s.Checks
+		const shown = 20
+		if len(names) > shown {
+			names = append(append([]string(nil), names[:shown]...), "...")
+		}
+		b.WriteString("\nchecks: ")
+		b.WriteString(strings.Join(names, ", "))
+	}
+	return b.String()
+}
+
 func formatStale(ev state.Event) string {
 	var b strings.Builder
 	b.WriteString(title("STALE", ev.Check, ev.Group))
@@ -282,6 +344,12 @@ func glyph(kind string) string {
 		return "\U0001F7E1 "
 	case "STALE":
 		return "\u26AA "
+	case "UNDELEGATED":
+		return "\U0001F534 "
+	case "DELEGATED":
+		return "\u2705 "
+	case "MUTE":
+		return "\U0001F507 "
 	}
 	return ""
 }

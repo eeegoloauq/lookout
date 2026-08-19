@@ -35,6 +35,16 @@ const (
 	// EventStale is a domain registry that has not answered for
 	// DomainStaleAfter. It is not a domain outage.
 	EventStale EventKind = "stale"
+	// EventUndelegated is a .ru-style state: that has lost the
+	// DELEGATED flag. The domain has been switched off, which is
+	// a current outage, not "expires in N days".
+	EventUndelegated EventKind = "undelegated"
+	// EventDelegated is the matching recovery: DELEGATED came back.
+	EventDelegated EventKind = "delegated"
+	// EventHeld is the digest of alerts that fired while a mute was
+	// on. They are not dropped (SPEC §1.1); they leave as one
+	// message when the mute lifts.
+	EventHeld EventKind = "held"
 )
 
 // Event is a state change worth telling someone about. It is written to the
@@ -267,6 +277,7 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 	events = append(events, e.observeDrift(c, event)...)
 	events = append(events, e.observeCert(c, event)...)
 	events = append(events, e.observeDomain(c, event)...)
+	events = append(events, e.observeDelegation(c, event)...)
 
 	if e.CheckState != before {
 		m.dirty = true
@@ -373,6 +384,36 @@ func (e *entry) observeDomain(c config.Check, base Event) []Event {
 		FreeDate:  base.Result.DomainFreeDate,
 		Source:    base.Result.DomainSource,
 	}
+	return []Event{ev}
+}
+
+func (e *entry) observeDelegation(c config.Check, base Event) []Event {
+	if c.Type != config.TypeDomain {
+		return nil
+	}
+	delegated, known := tcinetDelegation(base.Result.DomainState)
+	if !known {
+		return nil
+	}
+	if delegated {
+		e.DomainDelegated = true
+		e.DomainDelegationKnown = true
+		if !e.DomainUndelegatedNotice {
+			return nil
+		}
+		e.DomainUndelegatedNotice = false
+		ev := base
+		ev.Kind = EventDelegated
+		return []Event{ev}
+	}
+	e.DomainDelegated = false
+	e.DomainDelegationKnown = true
+	if e.DomainUndelegatedNotice {
+		return nil
+	}
+	e.DomainUndelegatedNotice = true
+	ev := base
+	ev.Kind = EventUndelegated
 	return []Event{ev}
 }
 

@@ -450,3 +450,107 @@ checks:
 		t.Errorf("host = %q", cfg.Checks[0].Host)
 	}
 }
+
+func TestMuteWindowsLoad(t *testing.T) {
+	cfg := mustLoad(t, `
+mute:
+  - every: [Saturday, Sunday]
+    at: "02:00"
+    duration: 4h
+    timezone: UTC
+    group: Public
+checks:
+  - name: MX
+    group: Public
+    type: dns
+    host: service.example
+    query_type: MX
+`)
+	if len(cfg.Mute) != 1 {
+		t.Fatalf("mute windows = %d", len(cfg.Mute))
+	}
+	w := cfg.Mute[0]
+	if w.At != 2*time.Hour || w.Duration != 4*time.Hour || w.Group != "Public" {
+		t.Errorf("window = %+v", w)
+	}
+	if len(w.Every) != 2 || w.Every[0] != time.Saturday || w.Every[1] != time.Sunday {
+		t.Errorf("every = %v", w.Every)
+	}
+	if w.TZName != "UTC" || w.Location != time.UTC {
+		t.Errorf("timezone = %s loc=%v", w.TZName, w.Location)
+	}
+}
+
+func TestMuteWindowRejectsCron(t *testing.T) {
+	_, err := Load("config.yaml", []byte(`
+mute:
+  - cron: "0 2 * * 6"
+    duration: 4h
+checks:
+  - name: Example
+    type: http
+    url: http://example.invalid
+`))
+	if err == nil {
+		t.Fatal("cron must be rejected")
+	}
+	if !strings.Contains(err.Error(), "cron expressions are not accepted") {
+		t.Errorf("error = %q", err)
+	}
+}
+
+func TestMuteWindowRequiresAtAndDuration(t *testing.T) {
+	_, err := Load("config.yaml", []byte(`
+mute:
+  - every: [Monday]
+checks:
+  - name: Example
+    type: http
+    url: http://example.invalid
+`))
+	if err == nil {
+		t.Fatal("missing at/duration must be an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "at is required") || !strings.Contains(msg, "duration is required") {
+		t.Errorf("error = %q", msg)
+	}
+}
+
+func TestMuteWindowUnknownCheck(t *testing.T) {
+	_, err := Load("config.yaml", []byte(`
+mute:
+  - at: "02:00"
+    duration: 1h
+    check: Missing
+checks:
+  - name: Example
+    type: http
+    url: http://example.invalid
+`))
+	if err == nil {
+		t.Fatal("want an error for a window that names a missing check")
+	}
+	if !strings.Contains(err.Error(), "no check named") {
+		t.Errorf("error = %q", err)
+	}
+}
+
+func TestHistoryFileDefaultsBesideStateFile(t *testing.T) {
+	cfg := mustLoad(t, minimal)
+	if cfg.HistoryFile != "history.jsonl" {
+		t.Errorf("history = %q, want it next to the default state file", cfg.HistoryFile)
+	}
+	cfg = mustLoad(t, `
+state:
+  file: /var/lib/lookout/state.json
+  history: /var/lib/lookout/history.jsonl
+checks:
+  - name: Example
+    type: http
+    url: http://example.invalid
+`)
+	if cfg.StateFile != "/var/lib/lookout/state.json" || cfg.HistoryFile != "/var/lib/lookout/history.jsonl" {
+		t.Errorf("state=%q history=%q", cfg.StateFile, cfg.HistoryFile)
+	}
+}

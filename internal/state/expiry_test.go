@@ -242,6 +242,121 @@ checks:
 	}
 }
 
+func TestDelegationLossFiresOnceAndClearsOnReturn(t *testing.T) {
+	cfg, err := config.Load("config.yaml", []byte(`
+checks:
+  - name: Registration
+    type: domain
+    domain: service.example
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Checks[0]
+	m := NewMachine()
+	now := epoch
+	expires := now.Add(90 * 24 * time.Hour)
+
+	ok := check.Result{
+		Name: c.Name, At: now, Outcome: check.OutcomeUp,
+		DomainExpiresAt: expires, DomainState: "REGISTERED, DELEGATED, VERIFIED", DomainSource: "whois",
+	}
+	if got := kinds(m.Observe(c, ok)); got != "" {
+		t.Fatalf("first delegated sight = %q, want none", got)
+	}
+
+	lost := ok
+	lost.At = now.Add(time.Hour)
+	lost.DomainState = "REGISTERED, VERIFIED"
+	evs := m.Observe(c, lost)
+	if kinds(evs) != "undelegated" {
+		t.Fatalf("loss = %q, want undelegated", kinds(evs))
+	}
+	if !evs[0].Alert {
+		t.Error("delegation loss must carry the check's alert default")
+	}
+
+	if got := kinds(m.Observe(c, lost)); got != "" {
+		t.Errorf("repeat loss = %q, must fire once per transition", got)
+	}
+
+	back := lost
+	back.At = now.Add(2 * time.Hour)
+	back.DomainState = "REGISTERED, DELEGATED, VERIFIED"
+	if got := kinds(m.Observe(c, back)); got != "delegated" {
+		t.Fatalf("return = %q, want delegated", got)
+	}
+
+	st, _ := m.State(c.Name)
+	if !st.DomainDelegated || st.DomainUndelegatedNotice {
+		t.Errorf("cleared flag: delegated=%v notice=%v", st.DomainDelegated, st.DomainUndelegatedNotice)
+	}
+}
+
+func TestDelegationLossOnFirstSightOfRegisteredWithoutDelegated(t *testing.T) {
+	cfg, err := config.Load("config.yaml", []byte(`
+checks:
+  - name: Registration
+    type: domain
+    domain: service.example
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Checks[0]
+	m := NewMachine()
+	evs := m.Observe(c, check.Result{
+		Name: c.Name, At: epoch, Outcome: check.OutcomeUp,
+		DomainExpiresAt: epoch.Add(90 * 24 * time.Hour),
+		DomainState:     "REGISTERED, VERIFIED",
+		DomainSource:    "whois",
+	})
+	if kinds(evs) != "undelegated" {
+		t.Fatalf("already undelegated at first sight = %q, want undelegated (the domain is off now)", kinds(evs))
+	}
+}
+
+func TestGTLDStatusIsNotDelegationLoss(t *testing.T) {
+	cfg, err := config.Load("config.yaml", []byte(`
+checks:
+  - name: Registration
+    type: domain
+    domain: service.example
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Checks[0]
+	m := NewMachine()
+	if got := kinds(m.Observe(c, check.Result{
+		Name: c.Name, At: epoch, Outcome: check.OutcomeUp,
+		DomainExpiresAt: epoch.Add(90 * 24 * time.Hour),
+		DomainState:     "clientDeleteProhibited https://icann.example/epp",
+		DomainSource:    "whois",
+	})); got != "" {
+		t.Fatalf("gTLD status = %q, must not be a tcinet emergency", got)
+	}
+}
+
+func TestTcinetDelegationTokens(t *testing.T) {
+	tests := []struct {
+		in               string
+		delegated, known bool
+	}{
+		{"", false, false},
+		{"REGISTERED, DELEGATED, VERIFIED", true, true},
+		{"REGISTERED, VERIFIED", false, true},
+		{"REGISTERED, NOT DELEGATED, VERIFIED", false, true},
+		{"clientDeleteProhibited", false, false},
+	}
+	for _, tc := range tests {
+		d, k := tcinetDelegation(tc.in)
+		if d != tc.delegated || k != tc.known {
+			t.Errorf("%q → delegated=%v known=%v, want %v %v", tc.in, d, k, tc.delegated, tc.known)
+		}
+	}
+}
+
 func TestLostStateDoesNotRefireExpiryOrDrift(t *testing.T) {
 	c := testCheck()
 	m := NewMachine()

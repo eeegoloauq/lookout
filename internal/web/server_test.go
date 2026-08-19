@@ -33,13 +33,23 @@ checks:
     timeout: 3s
 `
 
+// localPost builds a request that looks like it came from the host
+// running lookout: mutating endpoints refuse anything else.
+func localPost(target, body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:54321"
+	return req
+}
+
 func testMonitor(t *testing.T, src string) *monitor.Monitor {
 	t.Helper()
 	cfg, err := config.Load("config.yaml", []byte(src))
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
-	cfg.StateFile = filepath.Join(t.TempDir(), "state.json")
+	dir := t.TempDir()
+	cfg.StateFile = filepath.Join(dir, "state.json")
+	cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
 	return monitor.New(cfg, nil, monitor.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 }
 
@@ -477,7 +487,9 @@ checks:
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg.StateFile = filepath.Join(t.TempDir(), "state.json")
+		dir := t.TempDir()
+		cfg.StateFile = filepath.Join(dir, "state.json")
+		cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
 		m := monitor.New(cfg, scriptedProber{outcome: check.OutcomeDown},
 			monitor.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 			monitor.WithNotifier(failNotifier{err: errString("telegram unreachable")}),
@@ -542,6 +554,82 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 	}
 }
 
+func TestMuteAPIAndStatusVisibility(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	h := New(m, "test")
+
+	body := strings.NewReader(`{"for":"30m","group":"Services"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/mute", body)
+	req.RemoteAddr = "127.0.0.1:54321"
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mute: %d %s", rec.Code, rec.Body.Bytes())
+	}
+	var mr MuteResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &mr); err != nil {
+		t.Fatal(err)
+	}
+	if !mr.OK || mr.Until == nil {
+		t.Fatalf("mute response = %+v", mr)
+	}
+
+	docRec := get(t, h, "/api/status")
+	var doc StatusDocument
+	if err := json.Unmarshal(docRec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Mutes) != 1 || doc.Mutes[0].Group != "Services" {
+		t.Fatalf("mutes = %+v", doc.Mutes)
+	}
+	var photos, router CheckStatus
+	for _, c := range doc.Checks {
+		switch c.Name {
+		case "Photos":
+			photos = c
+		case "Router":
+			router = c
+		}
+	}
+	if !photos.Muted {
+		t.Error("Photos is in Services and must show muted")
+	}
+	if router.Muted {
+		t.Error("Router is in Core and must not be muted")
+	}
+
+	page := get(t, h, "/").Body.String()
+	if !strings.Contains(page, "Alerts muted") || !strings.Contains(page, "MUTED") {
+		t.Errorf("status page must show the mute, got:\n%s", page)
+	}
+	metrics := get(t, h, "/metrics").Body.String()
+	if !strings.Contains(metrics, `lookout_muted{check="Photos",group="Services"} 1`) {
+		t.Errorf("metrics missing muted gauge:\n%s", metrics)
+	}
+
+	un := httptest.NewRecorder()
+	h.ServeHTTP(un, localPost("/api/unmute", `{"group":"Services"}`))
+	if un.Code != http.StatusOK {
+		t.Fatalf("unmute: %d %s", un.Code, un.Body.Bytes())
+	}
+	var doc2 StatusDocument
+	if err := json.Unmarshal(get(t, h, "/api/status").Body.Bytes(), &doc2); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc2.Mutes) != 0 {
+		t.Errorf("mutes after unmute = %+v", doc2.Mutes)
+	}
+}
+
+func TestMuteRejectsBadDuration(t *testing.T) {
+	h := New(testMonitor(t, twoChecks), "test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, localPost("/api/mute", `{"for":"nope"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", rec.Code)
+	}
+}
+
 func TestUnknownPathIs404(t *testing.T) {
 	rec := get(t, New(testMonitor(t, twoChecks), "test"), "/nope")
 	if rec.Code != http.StatusNotFound {
@@ -553,5 +641,30 @@ func TestFaviconIsSilent(t *testing.T) {
 	rec := get(t, New(testMonitor(t, twoChecks), "test"), "/favicon.ico")
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status %d, want 204 so a browser tab does not log a 404", rec.Code)
+	}
+}
+
+// Reading the status is open to anyone who can reach the port; silencing
+// the monitor is not. The read-only surface is routinely bound to a LAN
+// address so a browser can open the page, and that must not hand every
+// host on the network a mute switch.
+func TestMutingIsRefusedFromTheNetwork(t *testing.T) {
+	h := New(testMonitor(t, twoChecks), "test")
+	for _, path := range []string{"/api/mute", "/api/unmute"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"for":"30m"}`))
+		req.RemoteAddr = "192.0.2.10:54321"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s from a remote address = %d, want %d", path, rec.Code, http.StatusForbidden)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/mute", strings.NewReader(`{"for":"30m"}`))
+	req.RemoteAddr = "127.0.0.1:54321"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("mute from loopback = %d, want %d", rec.Code, http.StatusOK)
 	}
 }

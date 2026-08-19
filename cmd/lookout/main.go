@@ -3,12 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,6 +46,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return validate(args[1:], stdout)
 	case "run":
 		return serve(args[1:], stderr)
+	case "mute":
+		return muteCmd(args[1:], stdout)
+	case "unmute":
+		return unmuteCmd(args[1:], stdout)
 	case "version":
 		fmt.Fprintln(stdout, version())
 		return nil
@@ -63,6 +70,11 @@ commands:
                       it finds, with the line it is on
   run [-v] [config]   probe the configured checks and serve the status
                       page until interrupted
+  mute --for 30m [--group NAME] [--check NAME] [config]
+                      silence alerts without stopping probes; talks to the
+                      running process over its HTTP listen address
+  unmute [--group NAME] [--check NAME] [config]
+                      lift an ad-hoc mute (scheduled windows stay)
   version             print the build version
 
 The configuration defaults to `+defaultConfigPath+`.
@@ -105,7 +117,11 @@ func validate(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "  %s: %d\n", g, groups[g])
 	}
 	fmt.Fprintf(out, "state file: %s\n", cfg.StateFile)
+	fmt.Fprintf(out, "history file: %s\n", cfg.HistoryFile)
 	fmt.Fprintf(out, "listen: %s\n", cfg.Listen)
+	if n := len(cfg.Mute); n > 0 {
+		fmt.Fprintf(out, "mute windows: %s\n", plural(n, "schedule"))
+	}
 	if cfg.Alerting.Mode == config.ModeNone {
 		// Loud on purpose: a monitor that cannot notify is a dashboard.
 		fmt.Fprintln(out, "alerting: DISABLED (alerting.mode: none) — nothing will ever be sent")
@@ -210,6 +226,100 @@ func serve(args []string, stderr io.Writer) error {
 	}
 	log.Info("lookout stopped")
 	return err
+}
+
+func muteCmd(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("mute", flag.ContinueOnError)
+	fs.SetOutput(out)
+	forFlag := fs.String("for", "", "how long to mute (30m, 2h, 1h30m)")
+	group := fs.String("group", "", "limit the mute to this check group")
+	check := fs.String("check", "", "limit the mute to this check")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *forFlag == "" {
+		return errors.New("mute requires --for (a duration such as 30m)")
+	}
+	d, err := time.ParseDuration(*forFlag)
+	if err != nil || d <= 0 {
+		return fmt.Errorf("--for %q is not a positive duration (expected forms like 30m, 2h)", *forFlag)
+	}
+	cfg, err := config.LoadFile(configPath(fs.Args()))
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(web.MuteRequest{For: d.String(), Group: *group, Check: *check})
+	resp, err := postJSON(dialURL(cfg.Listen, "/api/mute"), body)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	until := ""
+	if resp.Until != nil {
+		until = resp.Until.UTC().Format(time.RFC3339)
+	}
+	fmt.Fprintf(out, "muted until %s\n", until)
+	return nil
+}
+
+func unmuteCmd(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("unmute", flag.ContinueOnError)
+	fs.SetOutput(out)
+	group := fs.String("group", "", "lift only this group's ad-hoc mute")
+	check := fs.String("check", "", "lift only this check's ad-hoc mute")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadFile(configPath(fs.Args()))
+	if err != nil {
+		return err
+	}
+	body, _ := json.Marshal(web.UnmuteRequest{Group: *group, Check: *check})
+	resp, err := postJSON(dialURL(cfg.Listen, "/api/unmute"), body)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	fmt.Fprintf(out, "unmuted (%s)\n", plural(resp.Cleared, "digest"))
+	return nil
+}
+
+func dialURL(listen, path string) string {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return "http://" + listen + path
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + path
+}
+
+func postJSON(url string, body []byte) (web.MuteResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return web.MuteResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return web.MuteResponse{}, fmt.Errorf("cannot reach lookout at %s (is lookout run listening?): %w", url, err)
+	}
+	defer resp.Body.Close()
+	var out web.MuteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return web.MuteResponse{}, fmt.Errorf("lookout returned HTTP %d with an unreadable body: %w", resp.StatusCode, err)
+	}
+	if resp.StatusCode >= 400 && out.Error == "" {
+		out.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	return out, nil
 }
 
 func configPath(args []string) string {

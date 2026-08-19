@@ -13,7 +13,8 @@ one.
 Status: early development. `SPEC.md` is the design (in Russian); this release
 covers the check model, HTTP/DNS/domain probes, the threshold and instability
 state machine, durable state, the recent-history ring, Telegram alert delivery,
-and the status page / API / metrics.
+the status page / API / metrics, mute windows, long-term JSONL history, and a
+hardened systemd unit.
 
 ## Build
 
@@ -26,9 +27,11 @@ CGO_ENABLED=0 go build -o lookout ./cmd/lookout
 ```sh
 lookout validate config.yaml    # every problem, with the line it is on
 lookout run [-v] config.yaml    # probe and serve the status page until interrupted
+lookout mute --for 30m --group Public
+lookout unmute
 ```
 
-`lookout run` listens on `listen` in the config (default `127.0.0.1:8080`):
+`lookout run` listens on `listen` in the config (default `127.0.0.1:5665`):
 
 - `GET /` — status page: one HTML table, no JavaScript, no external assets
 - `GET /api/status` — JSON of every check (versioned; this is the public contract)
@@ -89,9 +92,43 @@ validation error rather than a silently empty header.
   listed in IANA's bootstrap, WHOIS on TCP/43 otherwise (including `.ru`
   at whois.tcinet.ru, field `paid-till`). A silent registry is `unknown`,
   not down; that becomes an alert only after three days. Tiers 60/30/14/7
-  days, then daily.
+  days, then daily. Losing the `.ru` `DELEGATED` flag is its own event,
+  fired once per transition.
+- **Mute windows.** Static schedules in the config (`every` + `at` +
+  `duration`) and ad-hoc `lookout mute --for 30m --group Public`, which
+  talks to the running process over its HTTP listen address (loopback by
+  default). Probes and history keep running; only delivery is suppressed.
+  Events that fire while muted become one digest when the mute lifts —
+  they are not dropped. The mute is visible on the status page and in
+  `/api/status`, and it survives a restart.
+- **Long-term history** — one JSON Lines record per check per UTC day
+  (uptime, incidents, p50/p95). The in-progress day lives in the state
+  file so a restart neither duplicates nor loses it.
 
-Long-term JSONL history and mute windows are not in this release.
+## Deploy
+
+The unit file is `contrib/systemd/lookout.service`. It runs as a dedicated
+`lookout` user with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`,
+`PrivateTmp`, `RestrictAddressFamilies`, and an empty `CapabilityBoundingSet`.
+Secrets come from an `EnvironmentFile` that you create with mode 0600.
+
+```sh
+CGO_ENABLED=0 go build -o lookout ./cmd/lookout
+install -o root -g root -m 0755 lookout /usr/bin/lookout
+useradd --system --home /var/lib/lookout --shell /usr/sbin/nologin lookout
+install -d -o lookout -g lookout -m 0750 /var/lib/lookout
+install -d -o root -g lookout -m 0750 /etc/lookout
+# config.yaml is yours — real hosts do not belong in this repository
+install -o root -g lookout -m 0640 config.yaml /etc/lookout/config.yaml
+install -o root -g lookout -m 0600 contrib/lookout.env.example /etc/lookout/lookout.env
+# edit /etc/lookout/lookout.env (token, chat id) then:
+install -o root -g root -m 0644 contrib/systemd/lookout.service /etc/systemd/system/lookout.service
+systemctl daemon-reload
+systemctl enable --now lookout
+```
+
+`state.file` and `state.history` in the config should point at
+`/var/lib/lookout/` so `ProtectSystem=strict` still lets lookout write.
 
 ## Tests
 

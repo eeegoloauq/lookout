@@ -27,11 +27,24 @@ const (
 	DefaultAlert            = true
 	DefaultStateFile        = "state.json"
 	DefaultBatchWindow      = 45 * time.Second
+	// 5665 rather than 8080: 8080 is every tool's default and collides on
+	// any busy host, the 9090/9115 pair belongs to Prometheus and its
+	// blackbox exporter by convention, and anything above 32768 can clash
+	// with the kernel's ephemeral source ports (32768-60999 on Linux), so
+	// the service occasionally fails to bind after a reboot. 5665 is
+	// unassigned by IANA and sits next to Nagios NRPE's 5666 — the
+	// monitoring neighbourhood, without taking anyone's port.
+	//
 	// DefaultListen is loopback only. The status page and API are for the
 	// machine that runs lookout, not the network; publishing them is a
 	// deliberate listen: override (SPEC §11, and the task's stricter
 	// reading of "LAN" as the loopback default).
-	DefaultListen = "127.0.0.1:8080"
+	DefaultListen = "127.0.0.1:5665"
+
+	// MaxAdhocMute is the longest lookout mute --for will accept. A
+	// forgotten mute is how a real outage stays silent; seven days is
+	// already a vacation, not a maintenance window.
+	MaxAdhocMute = 7 * 24 * time.Hour
 
 	// Type-specific intervals (SPEC §5). HTTP keeps DefaultInterval;
 	// DNS and domain checks are cheaper to run slowly than to hammer
@@ -80,10 +93,25 @@ var QueryTypes = []QueryType{QueryA, QueryAAAA, QueryMX, QueryNS, QueryTXT}
 
 // Config is a validated configuration.
 type Config struct {
-	Listen    string
-	StateFile string
-	Alerting  Alerting
-	Checks    []Check
+	Listen      string
+	StateFile   string
+	HistoryFile string
+	Alerting    Alerting
+	Mute        []MuteWindow
+	Checks      []Check
+}
+
+// MuteWindow is a recurring quiet period (SPEC §8). Probes keep running;
+// only delivery is suppressed. The spec names a cron expression; we take
+// a weekday list and a clock instead — see the series notes for why.
+type MuteWindow struct {
+	Every    []time.Weekday // empty means every day
+	At       time.Duration  // from local midnight
+	Duration time.Duration
+	Location *time.Location
+	TZName   string
+	Group    string
+	Check    string
 }
 
 // Alerting is the notification pipeline (SPEC §6, §7). Token and chat id are

@@ -42,6 +42,7 @@ func (s *server) writeMetrics(w io.Writer, now time.Time) {
 		certDays      float64
 		haveDomain    bool
 		domainDays    float64
+		muted         bool
 		check, group  string
 	}
 	rows := make([]series, 0, len(cfg.Checks))
@@ -80,6 +81,7 @@ func (s *server) writeMetrics(w io.Writer, now time.Time) {
 				row.haveUptime, row.uptime = true, ratio
 			}
 		}
+		row.muted = s.mon.CheckMuted(c.Group, c.Name, now)
 		rows = append(rows, row)
 	}
 
@@ -162,6 +164,16 @@ func (s *server) writeMetrics(w io.Writer, now time.Time) {
 			continue
 		}
 		writeSample(w, "lookout_domain_days_left", r.check, r.group, formatFloat(r.domainDays))
+	}
+
+	writeFamily(w, "lookout_muted", "gauge",
+		"1 if a mute window currently suppresses delivery for this check.")
+	for _, r := range rows {
+		v := 0
+		if r.muted {
+			v = 1
+		}
+		writeSample(w, "lookout_muted", r.check, r.group, strconv.Itoa(v))
 	}
 
 	box := s.mon.Outbox()

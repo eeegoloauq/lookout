@@ -222,6 +222,49 @@ func TestFormatDriftShowsBeforeAndAfter(t *testing.T) {
 	}
 }
 
+func TestFormatHeldNamesTheWindow(t *testing.T) {
+	got := Format([]state.Event{{
+		Kind:  state.EventHeld,
+		Group: "Public",
+		Summary: &state.Summary{
+			Count:  3,
+			ByKind: map[string]int{"down": 2, "up": 1},
+			Checks: []string{"MX", "NS"},
+		},
+	}})
+	for _, want := range []string{
+		"MUTE ended",
+		"3 alerts held while group Public was muted",
+		"down 2, up 1",
+		"MX, NS",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestFormatUndelegatedNamesTheState(t *testing.T) {
+	got := Format([]state.Event{{
+		Kind:  state.EventUndelegated,
+		Check: "service.example",
+		Group: "Public",
+		Result: check.Result{
+			DomainState:     "REGISTERED, VERIFIED",
+			DomainExpiresAt: time.Date(2027, 4, 30, 21, 0, 0, 0, time.UTC),
+		},
+	}})
+	for _, want := range []string{
+		"UNDELEGATED service.example (Public)",
+		"no longer delegated",
+		"REGISTERED, VERIFIED",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
 func TestHeadlinesCarryAStatusGlyph(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -235,6 +278,9 @@ func TestHeadlinesCarryAStatusGlyph(t *testing.T) {
 		{"cert", state.Event{Kind: state.EventExpiry, Check: "API", Expiry: &state.Expiry{Kind: state.ExpiryCertificate, DaysLeft: 14, Threshold: 14}}, "\U0001F7E1 CERT API"},
 		{"domain", state.Event{Kind: state.EventExpiry, Check: "Reg", Expiry: &state.Expiry{Kind: state.ExpiryDomain, DaysLeft: 30, Threshold: 30}}, "\U0001F7E1 DOMAIN Reg"},
 		{"stale", state.Event{Kind: state.EventStale, Check: "Reg"}, "\u26AA STALE Reg"},
+		{"undelegated", state.Event{Kind: state.EventUndelegated, Check: "Reg"}, "\U0001F534 UNDELEGATED Reg"},
+		{"delegated", state.Event{Kind: state.EventDelegated, Check: "Reg"}, "\u2705 DELEGATED Reg"},
+		{"held", state.Event{Kind: state.EventHeld, Group: "Public", Summary: &state.Summary{Count: 3}}, "\U0001F507 MUTE ended"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Format([]state.Event{tc.event})

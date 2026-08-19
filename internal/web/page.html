@@ -15,6 +15,9 @@
 {{if .Degraded}}
 <p class="banner" role="status">Lookout cannot notify: {{.Degraded}}</p>
 {{end}}
+{{if .Muted}}
+<p class="banner mute" role="status">{{.Muted}}</p>
+{{end}}
 <div class="wrap">
 <table>
   <thead>
@@ -34,7 +37,7 @@
     <tr class="{{.RowClass}}">
       <td class="name">{{.Name}}</td>
       <td class="group">{{.Group}}</td>
-      <td class="st"><span>{{.Label}}</span></td>
+      <td class="st"><span>{{.Label}}</span>{{if .Muted}} <span class="muted-tag">MUTED</span>{{end}}</td>
       <td class="num">{{.Checked}}</td>
       <td class="num">{{.Latency}}</td>
       <td class="num">{{.Uptime}}</td>

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ type fileConfig struct {
 	State    *fileState    `yaml:"state"`
 	Defaults *fileDefaults `yaml:"defaults"`
 	Alerting *fileAlerting `yaml:"alerting"`
+	Mute     []fileMute    `yaml:"mute"`
 	Checks   []fileCheck   `yaml:"checks"`
 }
 
@@ -46,7 +48,21 @@ type fileTelegram struct {
 }
 
 type fileState struct {
-	File *string `yaml:"file"`
+	File    *string `yaml:"file"`
+	History *string `yaml:"history"`
+}
+
+// fileMute is one static quiet window. Cron is accepted only so we can
+// reject it with a specific error instead of yaml.Strict()'s generic
+// "unknown field".
+type fileMute struct {
+	Every    []string `yaml:"every"`
+	At       *string  `yaml:"at"`
+	Duration *string  `yaml:"duration"`
+	Timezone *string  `yaml:"timezone"`
+	Group    *string  `yaml:"group"`
+	Check    *string  `yaml:"check"`
+	Cron     *string  `yaml:"cron"`
 }
 
 type fileDefaults struct {
@@ -171,6 +187,16 @@ func resolve(c *collector, raw *fileConfig) *Config {
 			}
 		}
 	}
+	cfg.HistoryFile = defaultHistoryFile(cfg.StateFile)
+	if raw.State != nil && raw.State.History != nil {
+		if v, ok := expand(c, "state.history", *raw.State.History); ok {
+			if strings.TrimSpace(v) == "" {
+				c.addf("state.history", "history file path is empty")
+			} else {
+				cfg.HistoryFile = v
+			}
+		}
+	}
 
 	if raw.Alerting != nil {
 		resolveAlerting(c, raw.Alerting, &cfg.Alerting)
@@ -202,7 +228,17 @@ func resolve(c *collector, raw *fileConfig) *Config {
 		}
 		cfg.Checks = append(cfg.Checks, chk)
 	}
+
+	cfg.Mute = resolveMute(c, raw.Mute, seen)
 	return cfg
+}
+
+func defaultHistoryFile(stateFile string) string {
+	dir := filepath.Dir(stateFile)
+	if dir == "." || dir == "" {
+		return "history.jsonl"
+	}
+	return filepath.Join(dir, "history.jsonl")
 }
 
 // defaultOrigin records which scalars the defaults block actually set, so a
@@ -211,6 +247,172 @@ func resolve(c *collector, raw *fileConfig) *Config {
 type defaultOrigin struct {
 	interval bool
 	timeout  bool
+}
+
+func resolveMute(c *collector, in []fileMute, checks map[string]int) []MuteWindow {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]MuteWindow, 0, len(in))
+	for i, raw := range in {
+		path := fmt.Sprintf("mute[%d]", i)
+		w, ok := resolveMuteWindow(c, path, raw, checks)
+		if ok {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func resolveMuteWindow(c *collector, path string, raw fileMute, checks map[string]int) (MuteWindow, bool) {
+	if raw.Cron != nil {
+		c.addf(path+".cron", "cron expressions are not accepted: use every: [weekday] and at: HH:MM. A homelab window is a weekday and a clock; cron is how Gatus grew timezone bugs")
+		return MuteWindow{}, false
+	}
+	w := MuteWindow{Location: time.UTC, TZName: "UTC"}
+	ok := true
+	if raw.At == nil {
+		c.addf(path+".at", "at is required (24h clock, for example %q)", "02:00")
+		ok = false
+	} else if at, parsed := parseClock(c, path+".at", *raw.At); parsed {
+		w.At = at
+	} else {
+		ok = false
+	}
+	if raw.Duration == nil {
+		c.addf(path+".duration", "duration is required (how long after at: the window stays quiet)")
+		ok = false
+	} else if d, parsed := duration(c, path+".duration", *raw.Duration); parsed {
+		w.Duration = d
+	} else {
+		ok = false
+	}
+	if !ok {
+		return MuteWindow{}, false
+	}
+
+	if raw.Timezone != nil {
+		name := strings.TrimSpace(*raw.Timezone)
+		if name == "" {
+			c.addf(path+".timezone", "timezone is empty")
+			return MuteWindow{}, false
+		}
+		loc, err := loadTZ(name)
+		if err != nil {
+			c.addf(path+".timezone", "unknown timezone %q: %v", name, err)
+			return MuteWindow{}, false
+		}
+		w.Location = loc
+		w.TZName = name
+	}
+
+	if len(raw.Every) > 0 {
+		seen := map[time.Weekday]bool{}
+		for _, name := range raw.Every {
+			day, err := parseWeekday(name)
+			if err != nil {
+				c.addf(path+".every", "%v", err)
+				continue
+			}
+			if seen[day] {
+				c.addf(path+".every", "duplicate weekday %q", name)
+				continue
+			}
+			seen[day] = true
+			w.Every = append(w.Every, day)
+		}
+		if len(w.Every) == 0 {
+			return MuteWindow{}, false
+		}
+	}
+
+	if raw.Group != nil {
+		w.Group = strings.TrimSpace(*raw.Group)
+	}
+	if raw.Check != nil {
+		w.Check = strings.TrimSpace(*raw.Check)
+		if w.Check != "" {
+			if _, ok := checks[w.Check]; !ok {
+				c.addf(path+".check", "no check named %q", w.Check)
+			}
+		}
+	}
+	return w, true
+}
+
+func loadTZ(name string) (*time.Location, error) {
+	if strings.EqualFold(name, "local") {
+		return time.Local, nil
+	}
+	if strings.EqualFold(name, "utc") || name == "GMT" {
+		return time.UTC, nil
+	}
+	return time.LoadLocation(name)
+}
+
+func parseClock(c *collector, path, raw string) (time.Duration, bool) {
+	raw = strings.TrimSpace(raw)
+	parts := strings.Split(raw, ":")
+	if len(parts) != 2 && len(parts) != 3 {
+		c.addf(path, "%q is not a 24h clock time (expected HH:MM)", raw)
+		return 0, false
+	}
+	nums := make([]int, len(parts))
+	for i, p := range parts {
+		if p == "" || !clockDigits(p) {
+			c.addf(path, "%q is not a 24h clock time (expected HH:MM)", raw)
+			return 0, false
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			c.addf(path, "%q is not a 24h clock time (expected HH:MM)", raw)
+			return 0, false
+		}
+		nums[i] = n
+	}
+	h, m := nums[0], nums[1]
+	s := 0
+	if len(nums) == 3 {
+		s = nums[2]
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59 {
+		c.addf(path, "%q is not a 24h clock time (expected HH:MM)", raw)
+		return 0, false
+	}
+	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second, true
+}
+
+func clockDigits(s string) bool {
+	if len(s) == 0 || len(s) > 2 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func parseWeekday(raw string) (time.Weekday, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	switch s {
+	case "sunday", "sun", "0":
+		return time.Sunday, nil
+	case "monday", "mon", "1":
+		return time.Monday, nil
+	case "tuesday", "tue", "tues", "2":
+		return time.Tuesday, nil
+	case "wednesday", "wed", "3":
+		return time.Wednesday, nil
+	case "thursday", "thu", "thur", "thurs", "4":
+		return time.Thursday, nil
+	case "friday", "fri", "5":
+		return time.Friday, nil
+	case "saturday", "sat", "6":
+		return time.Saturday, nil
+	}
+	return 0, fmt.Errorf("unknown weekday %q (use Monday … Sunday)", raw)
 }
 
 func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {

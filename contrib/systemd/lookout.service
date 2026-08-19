@@ -1,0 +1,42 @@
+[Unit]
+Description=lookout uptime monitor
+Documentation=file:///usr/share/doc/lookout/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lookout
+Group=lookout
+# ProtectSystem=strict makes the tree read-only; these two directories
+# are the only places lookout needs to write (state + JSONL history)
+# and to read its config and secrets from.
+ConfigurationDirectory=lookout
+StateDirectory=lookout
+WorkingDirectory=/var/lib/lookout
+ExecStart=/usr/bin/lookout run /etc/lookout/config.yaml
+# Secrets (bot token, chat id, basic auth). The file itself must be
+# mode 0600 — systemd will not chmod it.
+EnvironmentFile=-/etc/lookout/lookout.env
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Probes and Telegram need IP; the status page is local.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

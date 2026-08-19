@@ -71,6 +71,14 @@ type CheckState struct {
 	DomainTiersFired   uint32    `json:"domain_tiers_fired,omitempty"`
 	DomainDailyOn      string    `json:"domain_daily_on,omitempty"`
 	DomainStaleNotice  bool      `json:"domain_stale_notice,omitempty"`
+
+	// DomainDelegated / DomainDelegationKnown / DomainUndelegatedNotice
+	// track the tcinet DELEGATED flag. gTLD status codes do not use it,
+	// so a missing token is only an emergency after we have seen the
+	// tcinet vocabulary (or REGISTERED without DELEGATED on first sight).
+	DomainDelegated          bool `json:"domain_delegated,omitempty"`
+	DomainDelegationKnown    bool `json:"domain_delegation_known,omitempty"`
+	DomainUndelegatedNotice  bool `json:"domain_undelegated_notice,omitempty"`
 }
 
 // Snapshot is the whole durable state, as written to disk.
@@ -88,6 +96,49 @@ type Snapshot struct {
 	// It is process-wide, not per-check, and is safe to lose: the next
 	// domain probe refetches it.
 	Registry RegistryCache `json:"registry,omitzero"`
+
+	// Holds are the durable ad-hoc (and in-flight schedule) mutes.
+	// A restart must not lift a mute the operator asked for, and must
+	// not forget the digest of events that fired while it was on.
+	Holds []Hold `json:"holds,omitempty"`
+
+	// Days is the in-progress UTC-day accumulator per check, written
+	// so a restart at 23:00 does not lose the day. Flushed to the
+	// JSONL history file at midnight (SPEC §9.3).
+	Days map[string]DayAcc `json:"days,omitempty"`
+}
+
+// Hold is one active mute. Until is when it lifts. Suppressed is the
+// digest of events that were not delivered while it was on: they become
+// one EventHeld rather than vanishing.
+type Hold struct {
+	ID         string    `json:"id"`
+	Until      time.Time `json:"until"`
+	Group      string    `json:"group,omitempty"`
+	Check      string    `json:"check,omitempty"`
+	Source     string    `json:"source"` // "adhoc" or "schedule"
+	Created    time.Time `json:"created,omitzero"`
+	Suppressed *Summary  `json:"suppressed,omitempty"`
+}
+
+const (
+	HoldAdhoc    = "adhoc"
+	HoldSchedule = "schedule"
+)
+
+// MaxDayDurations bounds the persisted sample of response times used
+// for p50/p95. 1440 is a day of 60s probes; extra samples still count
+// toward uptime, they just stop changing the percentiles.
+const MaxDayDurations = 1440
+
+// DayAcc is one check's stats for a single UTC date, accumulated as
+// probes land so a restart cannot lose or duplicate the day.
+type DayAcc struct {
+	Date      string  `json:"date"`
+	Samples   int     `json:"samples"`
+	Up        int     `json:"up"`
+	Incidents int     `json:"incidents"`
+	Durations []int64 `json:"durations,omitempty"` // milliseconds
 }
 
 // RegistryCache is the weekly RDAP bootstrap plus any WHOIS servers we

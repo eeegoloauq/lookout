@@ -25,6 +25,7 @@ type pageView struct {
 	Tally    string
 	When     string
 	Degraded string
+	Muted    string
 	Checks   []pageRow
 }
 
@@ -38,6 +39,7 @@ type pageRow struct {
 	Uptime   string
 	Expiry   string
 	Incident string
+	Muted    bool
 }
 
 func (s *server) page(w http.ResponseWriter, _ *http.Request) {
@@ -82,6 +84,10 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			row.Incident = formatSpan(time.Duration(c.Incident.DurationMS) * time.Millisecond)
 		}
 		row.Expiry = formatExpiry(c)
+		row.Muted = c.Muted
+		if c.Muted {
+			row.RowClass += " muted"
+		}
 		rows = append(rows, row)
 	}
 
@@ -100,6 +106,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	if health.Status == "degraded" {
 		view.Degraded = health.Reason
 	}
+	view.Muted = formatMutes(doc.Mutes, now)
 
 	var buf bytes.Buffer
 	if err := pageTmpl.Execute(&buf, view); err != nil {
@@ -164,6 +171,32 @@ func formatLatency(d time.Duration) string {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func formatMutes(mutes []MuteView, now time.Time) string {
+	if len(mutes) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(mutes))
+	for _, m := range mutes {
+		scope := "all checks"
+		switch {
+		case m.Check != "":
+			scope = m.Check
+		case m.Group != "":
+			scope = "group " + m.Group
+		}
+		left := m.Until.Sub(now)
+		if left < 0 {
+			left = 0
+		}
+		parts = append(parts, fmt.Sprintf("%s until %s (%s left)", scope, m.Until.UTC().Format("15:04 UTC"), formatSpan(left)))
+	}
+	out := "Alerts muted: " + parts[0]
+	for _, p := range parts[1:] {
+		out += " · " + p
+	}
+	return out
 }
 
 func formatExpiry(c CheckStatus) string {

@@ -4,8 +4,10 @@ package monitor
 
 import (
 	"context"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/eeegoloauq/lookout/internal/check"
 	"github.com/eeegoloauq/lookout/internal/config"
 	"github.com/eeegoloauq/lookout/internal/history"
+	"github.com/eeegoloauq/lookout/internal/mute"
 	"github.com/eeegoloauq/lookout/internal/state"
 )
 
@@ -51,6 +54,13 @@ type Monitor struct {
 	// alerts the next time it saves check state.
 	loadedOutbox state.Outbox
 
+	book      *mute.Book
+	histLog   *history.Log
+	days      map[string]state.DayAcc
+	daysMu    sync.Mutex
+	daysDirty bool
+	wakeHolds chan struct{}
+
 	sem         chan struct{}
 	saveMu      sync.Mutex
 	restoreOnce sync.Once
@@ -75,14 +85,26 @@ func WithNotifier(n alert.Notifier) Option { return func(m *Monitor) { m.notifie
 
 // New wires a monitor. It does not touch the disk or the network yet.
 func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
+	if cfg.HistoryFile == "" {
+		dir := filepath.Dir(cfg.StateFile)
+		if dir == "." || dir == "" {
+			cfg.HistoryFile = "history.jsonl"
+		} else {
+			cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
+		}
+	}
 	m := &Monitor{
 		cfg:     cfg,
 		prober:  prober,
 		store:   state.NewStore(cfg.StateFile),
 		machine: state.NewMachine(),
 		hist:    history.New(),
-		log:     slog.Default(),
-		sem:     make(chan struct{}, maxConcurrentProbes),
+		histLog: history.NewLog(cfg.HistoryFile),
+		book:    mute.NewBook(cfg.Mute),
+		days:      map[string]state.DayAcc{},
+		wakeHolds: make(chan struct{}, 1),
+		log:       slog.Default(),
+		sem:       make(chan struct{}, maxConcurrentProbes),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -131,6 +153,16 @@ func (m *Monitor) Run(ctx context.Context) error {
 			m.pipeline.Run(ctx)
 		}()
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		m.watchHolds(ctx)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		m.watchDays(ctx)
+	}()
 	for _, c := range m.cfg.Checks {
 		wg.Add(1)
 		go func() {
@@ -165,6 +197,16 @@ func (m *Monitor) restore() {
 	}
 	m.machine.Restore(snap)
 	m.loadedOutbox = snap.Outbox
+	m.book.Restore(snap.Holds)
+	m.daysMu.Lock()
+	m.days = snap.Days
+	if m.days == nil {
+		m.days = map[string]state.DayAcc{}
+	}
+	m.daysMu.Unlock()
+	if err := m.histLog.Load(); err != nil {
+		m.log.Warn("starting with empty history file", "path", m.histLog.Path(), "err", err)
+	}
 	if m.pipeline != nil {
 		m.pipeline.Restore(snap.Outbox)
 	}
@@ -176,6 +218,12 @@ func (m *Monitor) restore() {
 		names = append(names, c.Name)
 	}
 	m.machine.Prune(names)
+	// A mute that expired while we were down, or a UTC day that crossed
+	// midnight, must be resolved before the first request or probe.
+	for _, ev := range m.book.Expire(time.Now()) {
+		m.emit(ev)
+	}
+	m.rollDays(time.Now())
 }
 
 // loop probes one check on its own schedule.
@@ -242,10 +290,16 @@ func (m *Monitor) probe(ctx context.Context, c config.Check) {
 		"duration", res.Duration,
 		"reason", res.Reason())
 
-	for _, ev := range m.machine.Observe(c, res) {
+	events := m.machine.Observe(c, res)
+	incidents := 0
+	for _, ev := range events {
+		if ev.Kind == state.EventDown {
+			incidents++
+		}
 		m.emit(ev)
 	}
-	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) || registryDirty(m.prober) {
+	m.recordDay(c, res, incidents)
+	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) || registryDirty(m.prober) || m.book.Dirty() || m.daysAreDirty() {
 		m.save()
 	}
 }
@@ -257,7 +311,17 @@ func registryDirty(p Prober) bool {
 
 func (m *Monitor) emit(ev state.Event) {
 	if m.pipeline != nil && ev.Alert {
-		m.pipeline.Enqueue(ev)
+		if m.book.Catch(ev, time.Now()) {
+			m.log.Info("alert held while muted",
+				"check", ev.Check, "group", ev.Group, "kind", string(ev.Kind))
+		} else {
+			m.pipeline.Enqueue(ev)
+		}
+	} else if ev.Alert && m.book.Catch(ev, time.Now()) {
+		// mode: none still records the digest so a later process
+		// with a notifier does not inherit a silent hole.
+		m.log.Info("alert held while muted",
+			"check", ev.Check, "group", ev.Group, "kind", string(ev.Kind))
 	}
 	if m.onEvent != nil {
 		m.onEvent(ev)
@@ -296,6 +360,17 @@ func (m *Monitor) logEvent(ev state.Event) {
 	case state.EventStale:
 		attrs = append(attrs, "silent_for", ev.StaleFor)
 		m.log.Warn("registry lookup stale", attrs...)
+	case state.EventUndelegated:
+		m.log.Error("domain is no longer delegated", attrs...)
+	case state.EventDelegated:
+		m.log.Info("domain is delegated again", attrs...)
+	case state.EventHeld:
+		n := 0
+		if ev.Summary != nil {
+			n = ev.Summary.Count
+		}
+		attrs = append(attrs, "held", n)
+		m.log.Info("mute ended", attrs...)
 	}
 }
 
@@ -308,13 +383,17 @@ func (m *Monitor) save() {
 	machineDirty := m.machine.Dirty()
 	outboxDirty := m.pipeline != nil && m.pipeline.Dirty()
 	regDirty := registryDirty(m.prober)
-	if !machineDirty && !outboxDirty && !regDirty {
+	holdsDirty := m.book.Dirty()
+	daysDirty := m.daysAreDirty()
+	if !machineDirty && !outboxDirty && !regDirty && !holdsDirty && !daysDirty {
 		return
 	}
 	m.machine.ClearDirty()
 	if m.pipeline != nil {
 		m.pipeline.ClearDirty()
 	}
+	m.book.ClearDirty()
+	m.clearDaysDirty()
 	if rv, ok := m.prober.(registryView); ok {
 		rv.ClearRegistryDirty()
 	}
@@ -322,6 +401,10 @@ func (m *Monitor) save() {
 	if rv, ok := m.prober.(registryView); ok {
 		snap.Registry = rv.Registry()
 	}
+	snap.Holds = m.book.Snapshot()
+	m.daysMu.Lock()
+	snap.Days = cloneDays(m.days)
+	m.daysMu.Unlock()
 	if m.pipeline != nil {
 		snap.Outbox = m.pipeline.Snapshot()
 	} else {
@@ -336,4 +419,217 @@ func (m *Monitor) save() {
 		// this is the one save failure that is not "just history".
 		m.log.Error("could not write state", "path", m.store.Path(), "err", err)
 	}
+}
+
+// Mute starts an ad-hoc quiet window. Probes keep running.
+func (m *Monitor) Mute(d time.Duration, group, check string) (state.Hold, error) {
+	if check != "" {
+		if _, ok := checkByName(m.cfg, check); !ok {
+			return state.Hold{}, fmt.Errorf("no check named %q", check)
+		}
+	}
+	if group != "" && !groupExists(m.cfg, group) {
+		return state.Hold{}, fmt.Errorf("no group named %q", group)
+	}
+	h, err := m.book.Mute(time.Now(), d, group, check)
+	if err != nil {
+		return state.Hold{}, err
+	}
+	m.save()
+	m.nudgeHolds()
+	m.log.Info("muted", "for", d, "until", h.Until.UTC().Format(time.RFC3339), "group", group, "check", check)
+	return h, nil
+}
+
+// Unmute lifts matching ad-hoc holds and delivers their digest.
+func (m *Monitor) Unmute(group, check string) int {
+	events := m.book.Unmute(time.Now(), group, check)
+	for _, ev := range events {
+		m.emit(ev)
+	}
+	m.save()
+	m.nudgeHolds()
+	m.log.Info("unmuted", "group", group, "check", check, "digests", len(events))
+	return len(events)
+}
+
+// Mutes is the currently active quiet windows, for the status page.
+func (m *Monitor) Mutes(now time.Time) []mute.View {
+	return m.book.Views(now)
+}
+
+// CheckMuted reports whether a check is in a quiet window right now.
+func (m *Monitor) CheckMuted(group, name string, now time.Time) bool {
+	return m.book.Muted(group, name, now)
+}
+
+// UptimeDays is sample-weighted availability over the last n UTC days
+// plus today, from the JSONL file. No samples → (0, 0), never 100%.
+func (m *Monitor) UptimeDays(name string, n int, now time.Time) (ratio float64, samples int) {
+	if n < 1 {
+		return 0, 0
+	}
+	since := now.UTC().AddDate(0, 0, -(n - 1)).Format("2006-01-02")
+	m.daysMu.Lock()
+	acc, ok := m.days[name]
+	m.daysMu.Unlock()
+	var today *state.DayAcc
+	if ok {
+		today = &acc
+	}
+	return m.histLog.Uptime(name, since, today)
+}
+
+func (m *Monitor) recordDay(c config.Check, res check.Result, incidents int) {
+	m.daysMu.Lock()
+	acc, rolled, ok := history.RecordDay(m.days[c.Name], res, incidents)
+	m.days[c.Name] = acc
+	m.daysDirty = true
+	m.daysMu.Unlock()
+	if ok {
+		m.flushDay(c.Name, c.Group, rolled)
+	}
+}
+
+func (m *Monitor) rollDays(now time.Time) {
+	today := now.UTC().Format("2006-01-02")
+	type pair struct {
+		name, group string
+		acc         state.DayAcc
+	}
+	var flushed []pair
+	m.daysMu.Lock()
+	for name, acc := range m.days {
+		if acc.Date == "" || acc.Date >= today {
+			continue
+		}
+		flushed = append(flushed, pair{name, groupOf(m.cfg, name), acc})
+		delete(m.days, name)
+		m.daysDirty = true
+	}
+	m.daysMu.Unlock()
+	for _, p := range flushed {
+		m.flushDay(p.name, p.group, p.acc)
+	}
+	if len(flushed) > 0 {
+		m.save()
+	}
+}
+
+func (m *Monitor) flushDay(name, group string, acc state.DayAcc) {
+	if acc.Samples == 0 && acc.Incidents == 0 {
+		return
+	}
+	rec := history.ToDaily(name, group, acc)
+	if err := m.histLog.Append(rec); err != nil {
+		m.log.Error("could not append history", "path", m.histLog.Path(), "err", err)
+		// Put it back so a later start retries rather than losing the day.
+		m.daysMu.Lock()
+		if _, exists := m.days[name]; !exists {
+			m.days[name] = acc
+			m.daysDirty = true
+		}
+		m.daysMu.Unlock()
+	}
+}
+
+func (m *Monitor) watchHolds(ctx context.Context) {
+	for {
+		now := time.Now()
+		events := m.book.Expire(now)
+		for _, ev := range events {
+			m.emit(ev)
+		}
+		if m.book.Dirty() {
+			m.save()
+		}
+		deadline, ok := m.book.NextDeadline(time.Now())
+		delay := time.Minute
+		if ok {
+			delay = time.Until(deadline)
+			if delay < 0 {
+				delay = 0
+			}
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-m.wakeHolds:
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
+func (m *Monitor) nudgeHolds() {
+	select {
+	case m.wakeHolds <- struct{}{}:
+	default:
+	}
+}
+
+func (m *Monitor) watchDays(ctx context.Context) {
+	m.rollDays(time.Now())
+	for {
+		next := history.NextUTCMidnight(time.Now())
+		timer := time.NewTimer(time.Until(next))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			m.rollDays(time.Now())
+		}
+	}
+}
+
+func (m *Monitor) daysAreDirty() bool {
+	m.daysMu.Lock()
+	defer m.daysMu.Unlock()
+	return m.daysDirty
+}
+
+func (m *Monitor) clearDaysDirty() {
+	m.daysMu.Lock()
+	defer m.daysMu.Unlock()
+	m.daysDirty = false
+}
+
+func cloneDays(in map[string]state.DayAcc) map[string]state.DayAcc {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]state.DayAcc, len(in))
+	for k, v := range in {
+		if v.Durations != nil {
+			v.Durations = append([]int64(nil), v.Durations...)
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func checkByName(cfg *config.Config, name string) (config.Check, bool) {
+	for _, c := range cfg.Checks {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return config.Check{}, false
+}
+
+func groupExists(cfg *config.Config, group string) bool {
+	for _, c := range cfg.Checks {
+		if c.Group == group {
+			return true
+		}
+	}
+	return false
+}
+
+func groupOf(cfg *config.Config, name string) string {
+	c, _ := checkByName(cfg, name)
+	return c.Group
 }

@@ -2,10 +2,19 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"log/slog"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/eeegoloauq/lookout/internal/config"
+	"github.com/eeegoloauq/lookout/internal/monitor"
+	"github.com/eeegoloauq/lookout/internal/web"
 )
 
 func write(t *testing.T, content string) string {
@@ -32,7 +41,7 @@ func TestValidateAcceptsAGoodConfig(t *testing.T) {
 	if !strings.Contains(out.String(), "1 check") || !strings.Contains(out.String(), "no problems found") {
 		t.Errorf("output = %q", out.String())
 	}
-	if !strings.Contains(out.String(), "listen: 127.0.0.1:8080") {
+	if !strings.Contains(out.String(), "listen: "+config.DefaultListen) {
 		t.Errorf("output = %q, want the loopback listen address", out.String())
 	}
 }
@@ -95,6 +104,55 @@ func TestValidateNotesMissingTelegramCredentials(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "LOOKOUT_TELEGRAM_TOKEN") {
 		t.Errorf("validate output = %q, want a note about the telegram environment", out.String())
+	}
+}
+
+func TestMuteCommandTalksToTheRunningProcess(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := config.Load("config.yaml", []byte(valid+"    group: Services\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.StateFile = filepath.Join(dir, "state.json")
+	cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
+	m := monitor.New(cfg, nil, monitor.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(web.New(m, "test"))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(dir, "config.yaml")
+	src := "listen: " + u.Host + "\n" + valid + "    group: Services\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if err := run([]string{"mute", "--for", "30m", "--group", "Services", path}, &out, &errOut); err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+	if !strings.Contains(out.String(), "muted until") {
+		t.Errorf("mute output = %q", out.String())
+	}
+	if !m.CheckMuted("Services", "Example", time.Now()) {
+		t.Fatal("CLI mute did not reach the running process")
+	}
+
+	out.Reset()
+	if err := run([]string{"unmute", "--group", "Services", path}, &out, &errOut); err != nil {
+		t.Fatalf("unmute: %v", err)
+	}
+	if m.CheckMuted("Services", "Example", time.Now()) {
+		t.Fatal("unmute did not lift the hold")
+	}
+}
+
+func TestMuteRequiresFor(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := run([]string{"mute", write(t, valid)}, &out, &errOut); err == nil {
+		t.Fatal("mute without --for must be an error")
 	}
 }
 

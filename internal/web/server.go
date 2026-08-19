@@ -9,6 +9,7 @@ package web
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 
 	"github.com/eeegoloauq/lookout/internal/monitor"
@@ -31,9 +32,34 @@ func New(m *monitor.Monitor, version string) http.Handler {
 	})
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/checks/{name}", s.checkHistory)
+	// Silencing the monitor is the one thing an attacker on the network
+	// would want to do to it, and the read-only surface is often bound to
+	// a LAN address so a browser can reach the page. Reading is open to
+	// whoever can reach the port; muting is not.
+	mux.HandleFunc("POST /api/mute", localOnly(s.mute))
+	mux.HandleFunc("POST /api/unmute", localOnly(s.unmute))
 	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	return mux
+}
+
+// localOnly rejects a request that did not come from the loopback
+// interface. It deliberately does not trust X-Forwarded-For: behind a
+// proxy that header is whatever the client typed.
+func localOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+			writeJSON(w, http.StatusForbidden, MuteResponse{
+				Error: "muting is only allowed from the host running lookout",
+			})
+			return
+		}
+		next(w, r)
+	}
 }
 
 type server struct {

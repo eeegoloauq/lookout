@@ -14,6 +14,7 @@ import (
 
 	"github.com/eeegoloauq/lookout/internal/check"
 	"github.com/eeegoloauq/lookout/internal/config"
+	"github.com/eeegoloauq/lookout/internal/history"
 	"github.com/eeegoloauq/lookout/internal/state"
 )
 
@@ -73,7 +74,9 @@ func testConfig(t *testing.T, checks string) *config.Config {
 	if err != nil {
 		t.Fatalf("test config: %v", err)
 	}
-	cfg.StateFile = filepath.Join(t.TempDir(), "state.json")
+	dir := t.TempDir()
+	cfg.StateFile = filepath.Join(dir, "state.json")
+	cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
 	return cfg
 }
 
@@ -477,6 +480,148 @@ checks:
 		}
 		if len(snap.Outbox.Items) != 0 {
 			t.Errorf("outbox still holds %d items after the retry", len(snap.Outbox.Items))
+		}
+	})
+}
+
+func TestMuteSuppressesDeliveryAndFlushesADigest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testConfig(t, `
+alerting:
+  batch_window: 45s
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+  - name: Router
+    group: Core
+    type: http
+    url: http://router.invalid
+    interval: 60s
+    timeout: 5s
+`)
+		p := newFakeProber()
+		p.outcome = func(string, int) check.Outcome { return check.OutcomeDown }
+		n := &recordingNotifier{}
+		m := New(cfg, p, WithLogger(quietLogger()), WithNotifier(n))
+		if _, err := m.Mute(30*time.Minute, "Services", ""); err != nil {
+			t.Fatal(err)
+		}
+		runFor(t, m, 10*time.Minute)
+
+		got := n.got()
+		for _, msg := range got {
+			if strings.Contains(msg, "Photos") && strings.Contains(msg, "DOWN") {
+				t.Fatalf("Photos was delivered while muted: %v", got)
+			}
+		}
+		// Core is not muted: the router outage must still arrive.
+		foundRouter := false
+		for _, msg := range got {
+			if strings.Contains(msg, "DOWN Router") {
+				foundRouter = true
+			}
+		}
+		if !foundRouter {
+			t.Fatalf("unmuted group was also silenced: %v", got)
+		}
+
+		// History must still have been recording the muted check.
+		ring, _ := m.History().Ring("Photos")
+		if ring.Len() == 0 {
+			t.Fatal("mute must not stop probes or history")
+		}
+
+		n2 := &recordingNotifier{}
+		m2 := New(cfg, newFakeProber(), WithLogger(quietLogger()), WithNotifier(n2))
+		m2.Restore()
+		// The mute is durable: a new process still holds it.
+		if !m2.CheckMuted("Services", "Photos", time.Now()) {
+			t.Fatal("mute did not survive the restart")
+		}
+		m2.Unmute("Services", "")
+		runFor(t, m2, 2*time.Minute)
+		held := false
+		for _, msg := range n2.got() {
+			if strings.Contains(msg, "MUTE ended") {
+				held = true
+			}
+		}
+		if !held {
+			t.Fatalf("digest of muted events was lost: %v", n2.got())
+		}
+	})
+}
+
+func TestDailyHistoryFlushesAtUTCMidnightAndSurvivesRestart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testConfig(t, `
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+`)
+		p := newFakeProber()
+		// Start at synctest's 2000-01-01 00:00 UTC; skip to 23:00 so
+		// a handful of probes land on that UTC day, then cross midnight.
+		m := New(cfg, p, WithLogger(quietLogger()))
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- m.Run(ctx) }()
+		time.Sleep(23 * time.Hour)
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+
+		// Restart after the day has been accumulating, still before midnight.
+		m2 := New(cfg, newFakeProber(), WithLogger(quietLogger()))
+		ctx, cancel = context.WithCancel(context.Background())
+		done = make(chan error, 1)
+		go func() { done <- m2.Run(ctx) }()
+		time.Sleep(2 * time.Hour) // crosses 00:00 UTC
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+
+		log := history.NewLog(cfg.HistoryFile)
+		if err := log.Load(); err != nil {
+			t.Fatal(err)
+		}
+		recs := log.Records()
+		found := 0
+		for _, r := range recs {
+			if r.Check == "Photos" && r.Date == "2000-01-01" {
+				found++
+				if r.Samples == 0 {
+					t.Error("flushed a day with no samples")
+				}
+			}
+		}
+		if found != 1 {
+			t.Fatalf("2000-01-01 Photos lines = %d, want 1 (no duplicate, no loss); records=%+v", found, recs)
+		}
+
+		// A third start must not rewrite the day.
+		m3 := New(cfg, newFakeProber(), WithLogger(quietLogger()))
+		runFor(t, m3, time.Minute)
+		log = history.NewLog(cfg.HistoryFile)
+		_ = log.Load()
+		found = 0
+		for _, r := range log.Records() {
+			if r.Check == "Photos" && r.Date == "2000-01-01" {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Fatalf("restart after midnight duplicated the day: %d", found)
 		}
 	})
 }
