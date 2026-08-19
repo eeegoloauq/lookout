@@ -657,6 +657,7 @@ func (m *Monitor) beat(now time.Time) {
 		return
 	}
 	down := m.downCount()
+	configured := m.configuredCount()
 	m.beatMu.Lock()
 	if !m.lastBeat.IsZero() && now.Before(m.lastBeat.Add(m.cfg.Alerting.Heartbeat)) {
 		m.beatMu.Unlock()
@@ -673,12 +674,25 @@ func (m *Monitor) beat(now time.Time) {
 		At:    now,
 		Alert: true,
 		Heartbeat: &state.Heartbeat{
-			Checks: len(m.cfg.Checks),
+			Checks: configured,
 			Down:   down,
 			Closed: closed,
 		},
 	})
 	m.save()
+}
+
+// configuredCount is what the operator wrote, not what lookout derived from
+// it: a heartbeat saying 24 checks about a file listing 20 reads as a bug in
+// one of them.
+func (m *Monitor) configuredCount() int {
+	n := 0
+	for _, c := range m.cfg.Checks {
+		if !c.Implicit {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *Monitor) downCount() int {

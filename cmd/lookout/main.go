@@ -308,7 +308,16 @@ func probeChannel(n alert.Notifier, cfg *config.Config, out io.Writer) error {
 	if err != nil || host == "" {
 		host = "unknown"
 	}
-	text := fmt.Sprintf("lookout test from %s, %s configured", host, plural(len(cfg.Checks), "check"))
+	// The count is what the file says, not what lookout derived from it:
+	// a probe of the channel that reports a number the operator cannot find
+	// in their own config makes them doubt the wrong thing.
+	written := 0
+	for _, c := range cfg.Checks {
+		if !c.Implicit {
+			written++
+		}
+	}
+	text := fmt.Sprintf("lookout test from %s, %s configured", host, plural(written, "check"))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := n.Notify(ctx, text); err != nil {
