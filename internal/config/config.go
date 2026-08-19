@@ -103,12 +103,17 @@ type Config struct {
 	// offset is how two systems end up disagreeing about an outage.
 	Location *time.Location
 	// TZName is Location as written in the config, for display.
-	TZName      string
-	StateFile   string
-	HistoryFile string
-	Alerting    Alerting
-	Mute        []MuteWindow
-	Checks      []Check
+	TZName string
+	// RegistrationGroup, when set, gives the derived registration checks a
+	// group and therefore a row of their own: one line per name, with the
+	// date it runs out. Empty keeps them off the board, where the sites
+	// that implied them carry the same fact.
+	RegistrationGroup string
+	StateFile         string
+	HistoryFile       string
+	Alerting          Alerting
+	Mute              []MuteWindow
+	Checks            []Check
 }
 
 // MuteWindow is a recurring quiet period (SPEC §8). Probes keep running;
@@ -189,7 +194,7 @@ type Check struct {
 
 	Expect Expect
 
-	Alert            bool
+	Alert bool
 	// Registration names the domain whose expiry this check implies, or
 	// RegistrationOff to imply none. Empty means "work it out from the
 	// host", which is what almost every check wants.

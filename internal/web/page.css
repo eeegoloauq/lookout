@@ -150,6 +150,7 @@ h2 {
    row is open at a time — on a board where you diagnose one thing at a
    time, that is the right number. */
 .summary {
+  position: relative;
   display: grid;
   color: inherit;
   text-decoration: none;
@@ -163,10 +164,34 @@ h2 {
 /* The disclosure triangle is replaced by the row itself being clickable:
    one affordance, not two. */
 .summary:hover { background: var(--panel); }
-.summary:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.summary:focus-within { outline: 2px solid var(--ink); outline-offset: -2px; }
 
 .panel { display: none; }
 .row:target .panel { display: block; }
+
+/* Two invisible links stacked on the row: one opens it, one closes it, and
+   which of them is on top depends on whether the row is the target. That is
+   what makes a second click collapse the row again — with :target alone,
+   clicking an open row just re-targets it and nothing happens. */
+.hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.shut { display: none; }
+.row:target .open { display: none; }
+.row:target .shut { display: block; }
+
+/* Text for whoever cannot see where the link is. */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 
 /* The state is said twice on purpose — the colour bar on the left edge is
    what the eye catches, the word is what stays true in a screenshot, in a

@@ -11,10 +11,10 @@ import (
 
 // Book is the durable set of mute holds. It is safe for concurrent use.
 type Book struct {
-	mu     sync.Mutex
-	holds  []state.Hold
-	nextID int64
-	dirty  bool
+	mu      sync.Mutex
+	holds   []state.Hold
+	nextID  int64
+	dirty   bool
 	windows []config.MuteWindow
 }
 

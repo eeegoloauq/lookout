@@ -24,13 +24,14 @@ import (
 // here, rather than in an UnmarshalYAML method, is what lets an error carry the
 // line it came from.
 type fileConfig struct {
-	Listen   *string       `yaml:"listen"`
-	Timezone *string       `yaml:"timezone"`
-	State    *fileState    `yaml:"state"`
-	Defaults *fileDefaults `yaml:"defaults"`
-	Alerting *fileAlerting `yaml:"alerting"`
-	Mute     []fileMute    `yaml:"mute"`
-	Checks   []fileCheck   `yaml:"checks"`
+	Listen            *string       `yaml:"listen"`
+	Timezone          *string       `yaml:"timezone"`
+	RegistrationGroup *string       `yaml:"registration_group"`
+	State             *fileState    `yaml:"state"`
+	Defaults          *fileDefaults `yaml:"defaults"`
+	Alerting          *fileAlerting `yaml:"alerting"`
+	Mute              []fileMute    `yaml:"mute"`
+	Checks            []fileCheck   `yaml:"checks"`
 }
 
 type fileAlerting struct {
@@ -194,6 +195,9 @@ func resolve(c *collector, raw *fileConfig) *Config {
 			cfg.TZName = name
 		}
 	}
+	if raw.RegistrationGroup != nil {
+		cfg.RegistrationGroup = strings.TrimSpace(*raw.RegistrationGroup)
+	}
 	if raw.State != nil && raw.State.File != nil {
 		if v, ok := expand(c, "state.file", *raw.State.File); ok {
 			if strings.TrimSpace(v) == "" {
@@ -246,7 +250,7 @@ func resolve(c *collector, raw *fileConfig) *Config {
 	}
 	// Every site implies watching the name it lives on (registration.go).
 	// Derived checks are appended last so an explicit one always wins.
-	cfg.Checks = append(cfg.Checks, derivedRegistrations(cfg.Checks, def)...)
+	cfg.Checks = append(cfg.Checks, derivedRegistrations(cfg.Checks, def, cfg.RegistrationGroup)...)
 
 	cfg.Mute = resolveMute(c, raw.Mute, seen)
 	return cfg

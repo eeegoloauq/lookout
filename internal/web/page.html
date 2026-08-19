@@ -39,14 +39,16 @@
   <h2>{{.Name}}<span class="gnote">{{.Note}}</span></h2>
   {{range .Rows}}
   <div class="row {{.RowClass}}" id="{{.ID}}">
-    <a class="summary" href="#{{.ID}}">
+    <div class="summary">
+      <a class="hit open" href="#{{.ID}}"><span class="sr">details for {{.Name}}</span></a>
+      <a class="hit shut" href="#"><span class="sr">collapse {{.Name}}</span></a>
       <span class="st">{{.Label}}</span>
       <span class="nm">{{.Name}}{{if .Badge}} <span class="tag {{.BadgeClass}}">{{.Badge}}</span>{{end}}{{if .Muted}} <span class="tag">muted</span>{{end}}</span>
       {{if .Wide}}<span class="num wide {{.WideClass}}">{{.Wide}}</span>{{else}}<span class="note">{{.Note}}</span>
       <span class="num lat">{{.Latency}}</span>
       <span class="num up24">{{.Uptime}}</span>{{end}}
       <span class="num ago">{{.Checked}}</span>
-    </a>
+    </div>
     <div class="panel">
       {{if .Timeline}}
       <div class="bar">{{range .Timeline}}<i class="{{.Class}}"{{if .Title}} title="{{.Title}}"{{end}}></i>{{end}}</div>

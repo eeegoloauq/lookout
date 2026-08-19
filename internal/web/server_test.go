@@ -708,7 +708,7 @@ func TestPageRowOpensIntoDetail(t *testing.T) {
 	feed(t, m, "Router", "DDD", now.Add(-30*time.Minute), 1500*time.Millisecond, 502)
 	body := get(t, New(m, "test"), "/").Body.String()
 	for _, want := range []string{
-		`class="summary" href="#c-`,
+		`class="hit open" href="#c-`,
 		"watching",
 		"down since",
 		"last failure",
@@ -1088,6 +1088,15 @@ func TestOpenRowSurvivesTheReload(t *testing.T) {
 	if !strings.Contains(body, `href="#c-photos"`) {
 		t.Errorf("nothing links to the row's own fragment:\n%s", body)
 	}
+	// Clicking an open row has to close it again. With :target alone a
+	// second click only re-targets the row and nothing moves, so an open
+	// row carries a second link, to no fragment at all.
+	if !strings.Contains(body, `class="hit shut" href="#"`) {
+		t.Error("an open row cannot be collapsed by clicking it again")
+	}
+	if !strings.Contains(body, ".row:target .shut") {
+		t.Error("the collapse link is not the one on top while the row is open")
+	}
 	if !strings.Contains(body, ".row:target .panel") {
 		t.Error("the open row is not driven by :target")
 	}
@@ -1131,5 +1140,37 @@ func TestPanelShowsTheAddressItConnectedTo(t *testing.T) {
 	body := get(t, New(m, "test"), "/").Body.String()
 	if !strings.Contains(body, "connected") || !strings.Contains(body, "203.0.113.9:443") {
 		t.Errorf("panel does not say which address answered:\n%s", body)
+	}
+}
+
+// With registration_group the derived names come back as their own rows —
+// the same board the operator had when the domain checks were written by
+// hand, without the blocks to maintain.
+func TestRegistrationGroupPutsDerivedChecksOnTheBoard(t *testing.T) {
+	const src = `
+registration_group: Domains
+checks:
+  - name: Site
+    group: Public Sites
+    type: http
+    url: https://site.example.com/
+`
+	m := testMonitor(t, src)
+	now := time.Now()
+	for _, c := range m.Config().Checks {
+		if c.Type != config.TypeDomain {
+			continue
+		}
+		m.Machine().Observe(c, check.Result{
+			Name: c.Name, At: now, Outcome: check.OutcomeUp,
+			DomainExpiresAt: now.Add(61*24*time.Hour + time.Hour),
+		})
+	}
+	body := get(t, New(m, "test"), "/").Body.String()
+	if !strings.Contains(body, "<h2>Domains") {
+		t.Errorf("registration_group did not produce a group:\n%s", body)
+	}
+	if !strings.Contains(body, "expires 61 days") {
+		t.Errorf("the derived row does not show its date:\n%s", body)
 	}
 }

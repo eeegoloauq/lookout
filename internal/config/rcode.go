@@ -21,14 +21,14 @@ var KnownRcodes = []string{
 }
 
 var rcodeAliases = map[string]string{
-	"NOERROR":  "NOERROR",
-	"SUCCESS":  "NOERROR",
-	"FORMERR":  "FORMERR",
-	"SERVFAIL": "SERVFAIL",
-	"NXDOMAIN": "NXDOMAIN",
+	"NOERROR":   "NOERROR",
+	"SUCCESS":   "NOERROR",
+	"FORMERR":   "FORMERR",
+	"SERVFAIL":  "SERVFAIL",
+	"NXDOMAIN":  "NXDOMAIN",
 	"NAMEERROR": "NXDOMAIN",
-	"NOTIMP":   "NOTIMP",
-	"REFUSED":  "REFUSED",
+	"NOTIMP":    "NOTIMP",
+	"REFUSED":   "REFUSED",
 }
 
 // ParseRcode compiles a DNS RCODE name. The result is the canonical

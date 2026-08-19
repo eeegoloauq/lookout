@@ -33,7 +33,7 @@ const RegistrationOff = "off"
 
 // derivedRegistrations returns the domain checks implied by the http and dns
 // checks in the configuration, in the order the names first appear.
-func derivedRegistrations(checks []Check, def Check) []Check {
+func derivedRegistrations(checks []Check, def Check, group string) []Check {
 	declared := map[string]bool{}
 	taken := map[string]bool{}
 	for _, c := range checks {
@@ -59,7 +59,10 @@ func derivedRegistrations(checks []Check, def Check) []Check {
 			// internal model, so it gets a name nobody would type.
 			derived.Name = name + " (registration)"
 		}
-		derived.Group = ""
+		// With a group the derived checks become rows of their own — a list
+		// of names and dates, which is worth having when there are many.
+		// Without one they stay behind the sites that implied them.
+		derived.Group = group
 		derived.Type = TypeDomain
 		derived.Host = name
 		derived.URL = ""

@@ -39,7 +39,7 @@ type Bootstrap struct {
 // were a real bootstrap.
 func ParseBootstrap(body []byte) (Bootstrap, error) {
 	var raw struct {
-		Publication string            `json:"publication"`
+		Publication string              `json:"publication"`
 		Services    [][]json.RawMessage `json:"services"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
@@ -92,7 +92,7 @@ func ParseBootstrap(body []byte) (Bootstrap, error) {
 // silent zero time: "could not read" must not look like "no expiry".
 func ParseRDAP(body []byte) (Record, error) {
 	var raw struct {
-		ErrorCode int `json:"errorCode"`
+		ErrorCode int    `json:"errorCode"`
 		Title     string `json:"title"`
 		Events    []struct {
 			Action string `json:"eventAction"`

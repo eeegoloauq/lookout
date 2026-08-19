@@ -145,3 +145,31 @@ checks:
 		t.Fatalf("err = %v, want a complaint about the registration name", err)
 	}
 }
+
+// The derived registrations are worth a board of their own when there are
+// several names — one line each, with the date. That is a preference, so it
+// is one line of configuration rather than a rule.
+func TestRegistrationGroupGivesDerivedChecksARow(t *testing.T) {
+	const checks = `
+checks:
+  - name: Site
+    type: http
+    url: https://example.com/
+`
+	if got := mustLoad(t, checks); derivedGroup(got.Checks) != "" {
+		t.Errorf("derived group = %q, want none by default", derivedGroup(got.Checks))
+	}
+	cfg := mustLoad(t, "registration_group: Domains\n"+checks)
+	if got := derivedGroup(cfg.Checks); got != "Domains" {
+		t.Errorf("derived group = %q, want Domains", got)
+	}
+}
+
+func derivedGroup(checks []Check) string {
+	for _, c := range checks {
+		if c.Implicit {
+			return c.Group
+		}
+	}
+	return "(none derived)"
+}

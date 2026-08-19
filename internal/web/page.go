@@ -108,9 +108,10 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	groups := map[string]*pageGroup{}
 	var order []string
 	for _, c := range doc.Checks {
-		if c.Implicit {
-			// A derived registration is not a row: the site that implied it
-			// shows its expiry, and a board of names nobody wrote is noise.
+		if c.Implicit && c.Group == "" {
+			// A derived registration is a row only when the operator asked
+			// for one with registration_group; otherwise the site that
+			// implied it carries the same fact and a second row is noise.
 			continue
 		}
 		row := pageRow{

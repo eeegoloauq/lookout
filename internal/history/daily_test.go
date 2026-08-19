@@ -117,5 +117,3 @@ func TestAppendDoesNotUseTheRealClock(t *testing.T) {
 		}
 	})
 }
-
-
