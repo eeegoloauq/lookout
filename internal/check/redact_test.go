@@ -30,6 +30,25 @@ func TestRedactSecretsStripsAuthorization(t *testing.T) {
 	}
 }
 
+func TestMaskURLRedactsUserinfo(t *testing.T) {
+	tests := []struct {
+		in, leak, wantSub string
+	}{
+		{"https://user:s3cret-pass@private.invalid/v1", "s3cret-pass", "xxxxx:xxxxx@private.invalid"},
+		{"https://s3cret-token@private.invalid/v1", "s3cret-token", "xxxxx@private.invalid"},
+		{"http://public.invalid/health", "", "http://public.invalid/health"},
+	}
+	for _, tc := range tests {
+		got := MaskURL(tc.in)
+		if tc.leak != "" && strings.Contains(got, tc.leak) {
+			t.Errorf("MaskURL(%q) still contains %q: %q", tc.in, tc.leak, got)
+		}
+		if tc.wantSub != "" && !strings.Contains(got, tc.wantSub) {
+			t.Errorf("MaskURL(%q) = %q, want it to contain %q", tc.in, got, tc.wantSub)
+		}
+	}
+}
+
 func TestSampleRedactsBeforeTruncating(t *testing.T) {
 	// A token that starts inside the first 200 bytes would otherwise leak as
 	// a truncated prefix. Redact first, then cut.
