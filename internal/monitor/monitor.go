@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eeegoloauq/lookout/internal/alert"
 	"github.com/eeegoloauq/lookout/internal/check"
 	"github.com/eeegoloauq/lookout/internal/config"
 	"github.com/eeegoloauq/lookout/internal/history"
@@ -27,13 +28,19 @@ type Prober interface {
 
 // Monitor owns the scheduling loop and the state that results feed into.
 type Monitor struct {
-	cfg     *config.Config
-	prober  Prober
-	store   *state.Store
-	machine *state.Machine
-	hist    *history.History
-	log     *slog.Logger
-	onEvent func(state.Event)
+	cfg      *config.Config
+	prober   Prober
+	store    *state.Store
+	machine  *state.Machine
+	hist     *history.History
+	log      *slog.Logger
+	onEvent  func(state.Event)
+	notifier alert.Notifier
+	pipeline *alert.Pipeline
+	// loadedOutbox is the queue as it was on disk, kept so a process that
+	// is not delivering (no notifier) cannot wipe someone else's pending
+	// alerts the next time it saves check state.
+	loadedOutbox state.Outbox
 
 	sem    chan struct{}
 	saveMu sync.Mutex
@@ -46,9 +53,15 @@ type Option func(*Monitor)
 // callers are expected to pass one.
 func WithLogger(l *slog.Logger) Option { return func(m *Monitor) { m.log = l } }
 
-// WithEventFunc installs a sink for state changes. Delivering them to a
-// notifier is the next release's job; until then they are logged.
+// WithEventFunc installs a sink for state changes. Tests use this to
+// observe events without going through the outbox; production leaves it
+// unset so events are logged and, if a notifier is configured, queued.
 func WithEventFunc(f func(state.Event)) Option { return func(m *Monitor) { m.onEvent = f } }
+
+// WithNotifier enables durable delivery. Events with Alert=true are
+// written to the outbox and drained by the pipeline; without a notifier
+// they are only logged.
+func WithNotifier(n alert.Notifier) Option { return func(m *Monitor) { m.notifier = n } }
 
 // New wires a monitor. It does not touch the disk or the network yet.
 func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
@@ -63,6 +76,10 @@ func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
 	}
 	for _, opt := range opts {
 		opt(m)
+	}
+	if m.notifier != nil {
+		m.pipeline = alert.NewPipeline(m.notifier, m.cfg.Alerting.BatchWindow, m.log)
+		m.pipeline.SetPersist(m.save)
 	}
 	return m
 }
@@ -87,6 +104,13 @@ func (m *Monitor) Run(ctx context.Context) error {
 
 	start := time.Now()
 	var wg sync.WaitGroup
+	if m.pipeline != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.pipeline.Run(ctx)
+		}()
+	}
 	for _, c := range m.cfg.Checks {
 		wg.Add(1)
 		go func() {
@@ -110,6 +134,10 @@ func (m *Monitor) restore() {
 		m.log.Warn("starting with empty state", "path", m.store.Path(), "err", err)
 	}
 	m.machine.Restore(snap)
+	m.loadedOutbox = snap.Outbox
+	if m.pipeline != nil {
+		m.pipeline.Restore(snap.Outbox)
+	}
 }
 
 // loop probes one check on its own schedule.
@@ -179,12 +207,15 @@ func (m *Monitor) probe(ctx context.Context, c config.Check) {
 	for _, ev := range m.machine.Observe(c, res) {
 		m.emit(ev)
 	}
-	if m.machine.Dirty() {
+	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) {
 		m.save()
 	}
 }
 
 func (m *Monitor) emit(ev state.Event) {
+	if m.pipeline != nil && ev.Alert {
+		m.pipeline.Enqueue(ev)
+	}
 	if m.onEvent != nil {
 		m.onEvent(ev)
 		return
@@ -219,13 +250,28 @@ func (m *Monitor) logEvent(ev state.Event) {
 func (m *Monitor) save() {
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
-	if !m.machine.Dirty() {
+	machineDirty := m.machine.Dirty()
+	outboxDirty := m.pipeline != nil && m.pipeline.Dirty()
+	if !machineDirty && !outboxDirty {
 		return
 	}
 	m.machine.ClearDirty()
-	if err := m.store.Save(m.machine.Snapshot()); err != nil {
-		// Losing the write is survivable — it costs incident continuity across
-		// a restart, not a missed alert — so it is logged, not fatal.
+	if m.pipeline != nil {
+		m.pipeline.ClearDirty()
+	}
+	snap := m.machine.Snapshot()
+	if m.pipeline != nil {
+		snap.Outbox = m.pipeline.Snapshot()
+	} else {
+		// A process that is not delivering must leave the on-disk queue
+		// alone: overwriting it with empty would drop someone else's
+		// undelivered alerts.
+		snap.Outbox = m.loadedOutbox
+	}
+	if err := m.store.Save(snap); err != nil {
+		// Losing the write is survivable — it costs incident continuity
+		// across a restart — but an unwritten outbox is a missed alert, so
+		// this is the one save failure that is not "just history".
 		m.log.Error("could not write state", "path", m.store.Path(), "err", err)
 	}
 }

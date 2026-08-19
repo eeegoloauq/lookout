@@ -11,7 +11,7 @@ one.
 
 Status: early development. `SPEC.md` is the design (in Russian); this release
 covers the check model, the HTTP probe, the threshold and instability state
-machine, durable state and the recent-history ring.
+machine, durable state, the recent-history ring, and Telegram alert delivery.
 
 ## Build
 
@@ -47,9 +47,17 @@ validation error rather than a silently empty header.
 - **A scheduler** that computes ticks from a fixed origin, offset by a hash of
   the check name: no drift behind a slow target, no thundering herd, and the
   same spread after every restart.
+- **Durable alert delivery** to Telegram. A state change is written to an
+  outbox in the state file before anyone tries to send it, and leaves the
+  queue only after the Bot API confirms delivery. Retries use exponential
+  backoff; a full queue collapses into a summary instead of dropping events.
+  Events that mature inside `batch_window` (default 45s) leave as one
+  message, grouped by check group. The HTTP client speaks SOCKS5 because
+  `api.telegram.org` is often unreachable directly. Token and chat id come
+  from `LOOKOUT_TELEGRAM_TOKEN` and `LOOKOUT_TELEGRAM_CHAT_ID` — never from
+  the config file.
 
-Alert delivery, the status page, the API, DNS and domain checks are not in this
-release. Events are produced and logged; nothing is sent anywhere yet.
+The status page, the API, DNS and domain checks are not in this release.
 
 ## Tests
 

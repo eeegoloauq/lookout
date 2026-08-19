@@ -15,6 +15,7 @@ import (
 	"sort"
 	"syscall"
 
+	"github.com/eeegoloauq/lookout/internal/alert"
 	"github.com/eeegoloauq/lookout/internal/config"
 	"github.com/eeegoloauq/lookout/internal/monitor"
 	"github.com/eeegoloauq/lookout/internal/probe"
@@ -100,6 +101,15 @@ func validate(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "  %s: %d\n", g, groups[g])
 	}
 	fmt.Fprintf(out, "state file: %s\n", cfg.StateFile)
+	fmt.Fprintf(out, "alerting: telegram, batch window %s", cfg.Alerting.BatchWindow)
+	if cfg.Alerting.Telegram.Proxy != "" {
+		fmt.Fprintf(out, ", socks5 proxy configured")
+	}
+	fmt.Fprintln(out)
+	if os.Getenv(config.EnvTelegramToken) == "" || os.Getenv(config.EnvTelegramChatID) == "" {
+		fmt.Fprintf(out, "note: %s and %s must be set for lookout run to start\n",
+			config.EnvTelegramToken, config.EnvTelegramChatID)
+	}
 
 	silent := 0
 	for _, c := range cfg.Checks {
@@ -138,8 +148,19 @@ func serve(args []string, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	m := monitor.New(cfg, probe.NewHTTP(), monitor.WithLogger(log))
-	log.Info("lookout starting", "version", version(), "checks", len(cfg.Checks), "config", path, "state", cfg.StateFile)
+	notifier, err := alert.TelegramFromEnv(cfg.Alerting.Telegram.Proxy)
+	if err != nil {
+		return err
+	}
+
+	m := monitor.New(cfg, probe.NewHTTP(), monitor.WithLogger(log), monitor.WithNotifier(notifier))
+	log.Info("lookout starting",
+		"version", version(),
+		"checks", len(cfg.Checks),
+		"config", path,
+		"state", cfg.StateFile,
+		"batch_window", cfg.Alerting.BatchWindow,
+		"telegram_proxy", cfg.Alerting.Telegram.Proxy != "")
 	err = m.Run(ctx)
 	log.Info("lookout stopped")
 	return err

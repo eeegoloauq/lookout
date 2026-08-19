@@ -28,6 +28,18 @@ defaults:
   # alert: true is the default and does not need to be written. Silence must
   # never be a configuration accident.
 
+alerting:
+  # After the first ready alert, wait this long and send every check that
+  # changed during the window as one message. Stops a gateway drop from
+  # producing one Telegram message per check.
+  batch_window: 45s
+  telegram:
+    # Bot token and chat id are never written here:
+    #   LOOKOUT_TELEGRAM_TOKEN
+    #   LOOKOUT_TELEGRAM_CHAT_ID
+    # Telegram is often unreachable directly; send through SOCKS5.
+    proxy: socks5://proxy.example:1080
+
 checks:
   - name: Photos
     group: Services

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -361,3 +362,127 @@ checks:
 		}
 	})
 }
+
+type recordingNotifier struct {
+	mu       sync.Mutex
+	err      error
+	messages []string
+}
+
+func (r *recordingNotifier) Notify(ctx context.Context, text string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	r.messages = append(r.messages, text)
+	return nil
+}
+
+func (r *recordingNotifier) setErr(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = err
+}
+
+func (r *recordingNotifier) got() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.messages...)
+}
+
+// A confirmed outage must become a delivered notification, not just a log
+// line. This is the half of SPEC §1.1 that "alert defaults to true" does
+// not cover: the alert is configured and still has to arrive.
+func TestOutageIsDeliveredThroughTheNotifier(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testConfig(t, `
+alerting:
+  batch_window: 45s
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+`)
+		p := newFakeProber()
+		p.outcome = func(string, int) check.Outcome { return check.OutcomeDown }
+		n := &recordingNotifier{}
+		m := New(cfg, p, WithLogger(quietLogger()), WithNotifier(n))
+		runFor(t, m, 10*time.Minute)
+
+		got := n.got()
+		if len(got) != 1 {
+			t.Fatalf("delivered %d messages, want 1: %v", len(got), got)
+		}
+		if !strings.Contains(got[0], "DOWN Photos") {
+			t.Errorf("message = %q", got[0])
+		}
+		snap, err := state.NewStore(cfg.StateFile).Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snap.Outbox.Items) != 0 {
+			t.Errorf("outbox still holds %d items after delivery", len(snap.Outbox.Items))
+		}
+	})
+}
+
+func TestDeliveryFailureKeepsTheOutboxAcrossRestart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testConfig(t, `
+alerting:
+  batch_window: 45s
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+`)
+		down := newFakeProber()
+		down.outcome = func(string, int) check.Outcome { return check.OutcomeDown }
+		n := &recordingNotifier{}
+		n.setErr(errUnavailable)
+		runFor(t, New(cfg, down, WithLogger(quietLogger()), WithNotifier(n)), 10*time.Minute)
+
+		if len(n.got()) != 0 {
+			t.Fatalf("delivered while the channel was down: %v", n.got())
+		}
+		snap, err := state.NewStore(cfg.StateFile).Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snap.Outbox.Items) != 1 {
+			t.Fatalf("outbox = %d items, want the undelivered down event", len(snap.Outbox.Items))
+		}
+
+		n.setErr(nil)
+		// The check stays down, so the state machine emits nothing new.
+		// Delivery has to come from the restored outbox.
+		stillDown := newFakeProber()
+		stillDown.outcome = func(string, int) check.Outcome { return check.OutcomeDown }
+		runFor(t, New(cfg, stillDown, WithLogger(quietLogger()), WithNotifier(n)), 2*time.Minute)
+
+		got := n.got()
+		if len(got) != 1 || !strings.Contains(got[0], "DOWN Photos") {
+			t.Fatalf("after restart: %v", got)
+		}
+		snap, err = state.NewStore(cfg.StateFile).Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snap.Outbox.Items) != 0 {
+			t.Errorf("outbox still holds %d items after the retry", len(snap.Outbox.Items))
+		}
+	})
+}
+
+var errUnavailable = errString("telegram unreachable")
+
+type errString string
+
+func (e errString) Error() string { return string(e) }

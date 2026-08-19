@@ -70,6 +70,31 @@ func TestUnknownCommandAndMissingFile(t *testing.T) {
 	}
 }
 
+func TestRunRequiresTelegramCredentials(t *testing.T) {
+	t.Setenv("LOOKOUT_TELEGRAM_TOKEN", "")
+	t.Setenv("LOOKOUT_TELEGRAM_CHAT_ID", "")
+	var out, errOut bytes.Buffer
+	err := run([]string{"run", write(t, valid)}, &out, &errOut)
+	if err == nil {
+		t.Fatal("run without telegram credentials must be an error")
+	}
+	if !strings.Contains(err.Error(), "LOOKOUT_TELEGRAM_TOKEN") {
+		t.Errorf("error = %q, want it to name the missing variable", err)
+	}
+}
+
+func TestValidateNotesMissingTelegramCredentials(t *testing.T) {
+	t.Setenv("LOOKOUT_TELEGRAM_TOKEN", "")
+	t.Setenv("LOOKOUT_TELEGRAM_CHAT_ID", "")
+	var out, errOut bytes.Buffer
+	if err := run([]string{"validate", write(t, valid)}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "LOOKOUT_TELEGRAM_TOKEN") {
+		t.Errorf("validate output = %q, want a note about the telegram environment", out.String())
+	}
+}
+
 func TestHelpAndVersion(t *testing.T) {
 	for _, args := range [][]string{{"help"}, {"version"}} {
 		var out, errOut bytes.Buffer
