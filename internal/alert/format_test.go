@@ -415,3 +415,35 @@ func TestTransportErrorsDropTheRequestPrefix(t *testing.T) {
 		t.Errorf("the failure itself must survive: %q", got)
 	}
 }
+
+// A still-alive ping is bookkeeping, not an outage: it has to open with
+// the quiet glyph and stay one sentence plus the two facts that say
+// whether lookout is actually watching anything.
+func TestFormatHeartbeatIsQuietBookkeeping(t *testing.T) {
+	got := Format([]state.Event{{
+		Kind:      state.EventHeartbeat,
+		Alert:     true,
+		Heartbeat: &state.Heartbeat{Checks: 12, Down: 1, Closed: 3},
+	}})
+	want := "\U0001F515 lookout is alive\n" +
+		"12 checks configured, 1 currently down\n" +
+		"3 incidents closed since the last heartbeat"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// Twenty paragraphs are not read; a heartbeat that lands next to an
+// outage has to stay a single line in the list, not a three-line aside.
+func TestFormatHeartbeatInABatchStaysOneLine(t *testing.T) {
+	got := Format([]state.Event{
+		{Kind: state.EventDown, Check: "Photos", Result: check.Result{StatusCode: 503}},
+		{Kind: state.EventHeartbeat, Heartbeat: &state.Heartbeat{Checks: 2, Down: 1, Closed: 0}},
+	})
+	if !strings.HasPrefix(got, "\U0001F534") {
+		t.Errorf("an outage in the batch must keep the red glyph:\n%s", got)
+	}
+	if !strings.Contains(got, "lookout is alive — 2 checks, 1 down, 0 incidents closed") {
+		t.Errorf("heartbeat line missing:\n%s", got)
+	}
+}

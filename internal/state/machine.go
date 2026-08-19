@@ -52,6 +52,9 @@ const (
 	// on. They are not dropped (SPEC §1.1); they leave as one
 	// message when the mute lifts.
 	EventHeld EventKind = "held"
+	// EventHeartbeat is lookout saying it is still running. Without it a
+	// dead process is indistinguishable from a quiet homelab (SPEC §12).
+	EventHeartbeat EventKind = "heartbeat"
 )
 
 // Event is a state change worth telling someone about. It is written to the
@@ -85,6 +88,16 @@ type Event struct {
 	Expiry *Expiry `json:"expiry,omitempty"`
 	// StaleFor is set on EventStale: how long the registry has been silent.
 	StaleFor time.Duration `json:"stale_for,omitempty"`
+
+	// Heartbeat is set on EventHeartbeat.
+	Heartbeat *Heartbeat `json:"heartbeat,omitempty"`
+}
+
+// Heartbeat is what lookout reports about itself, not about any one check.
+type Heartbeat struct {
+	Checks int `json:"checks"`
+	Down   int `json:"down"`
+	Closed int `json:"closed"`
 }
 
 // Drift is a zone snapshot that changed.

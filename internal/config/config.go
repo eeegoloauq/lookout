@@ -145,6 +145,12 @@ type Alerting struct {
 	// following one from the previous reminder, and the last value repeats
 	// forever. Empty means only state changes ever notify.
 	Reminders []time.Duration
+	// Heartbeat is how often lookout pages just to say it is still
+	// running. Zero (the default, and the value of an explicit 0) means
+	// off: a missing still-alive message is then the operator's choice,
+	// not a forgotten default. The last send is durable so a restart
+	// cannot turn a weekly ping into one per boot.
+	Heartbeat time.Duration
 	Telegram  Telegram
 }
 

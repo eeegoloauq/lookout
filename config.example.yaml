@@ -63,6 +63,11 @@ alerting:
   # reminder, and the last value repeats. `reminders: []` turns reminders
   # off and leaves state changes as the only thing that notifies.
   reminders: [1h, 4h, 24h]
+  # A still-alive message on this cadence, so a dead lookout is not
+  # mistaken for a quiet one. 0s or omitted turns it off. The last send
+  # is remembered in the state file: a restart does not re-page, and a
+  # week of downtime does not queue a backlog.
+  heartbeat: 168h
   telegram:
     # Bot token and chat id are never written here:
     #   LOOKOUT_TELEGRAM_TOKEN

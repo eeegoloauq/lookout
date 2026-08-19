@@ -38,6 +38,7 @@ type fileAlerting struct {
 	Mode        *string       `yaml:"mode"`
 	BatchWindow *string       `yaml:"batch_window"`
 	Reminders   *[]string     `yaml:"reminders"`
+	Heartbeat   *string       `yaml:"heartbeat"`
 	Telegram    *fileTelegram `yaml:"telegram"`
 }
 
@@ -454,6 +455,9 @@ func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {
 	}
 	if in.Reminders != nil {
 		into.Reminders = resolveReminders(c, *in.Reminders)
+	}
+	if in.Heartbeat != nil {
+		into.Heartbeat = resolveHeartbeat(c, *in.Heartbeat)
 	}
 	if in.Telegram == nil {
 		return
@@ -1134,6 +1138,27 @@ func duration(c *collector, path, raw string) (time.Duration, bool) {
 		return 0, false
 	}
 	return d, true
+}
+
+// resolveHeartbeat accepts the same duration forms as batch_window, plus
+// zero. Zero is how an operator turns the still-alive message off without
+// deleting the key; a negative interval is the same misconfig a negative
+// batch_window is.
+func resolveHeartbeat(c *collector, raw string) time.Duration {
+	s := strings.TrimSpace(raw)
+	if s == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		c.addf("alerting.heartbeat", "%q is not a duration (expected forms like %q, %q, %q)", raw, "30s", "5m", "1h30m")
+		return 0
+	}
+	if d < 0 {
+		c.addf("alerting.heartbeat", "%q must be zero or positive", raw)
+		return 0
+	}
+	return d
 }
 
 func positive(c *collector, path string, n int) (int, bool) {

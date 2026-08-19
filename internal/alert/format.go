@@ -68,7 +68,7 @@ func severity(ev state.Event) severityRank {
 			return sevBad
 		}
 		return sevSoon
-	case state.EventHeld, state.EventSummary:
+	case state.EventHeld, state.EventSummary, state.EventHeartbeat:
 		return sevQuiet
 	case state.EventDown:
 		// A response we can no longer read is a changed API, not an outage.
@@ -162,6 +162,8 @@ func headerPhrase(key string, n int) string {
 		return "mute ended"
 	case string(state.EventSummary):
 		return "folded alerts"
+	case string(state.EventHeartbeat):
+		return "heartbeat"
 	}
 	return fmt.Sprintf("%d %s", n, key)
 }
@@ -203,6 +205,12 @@ func detail(ev state.Event) string {
 		}
 	case state.EventSummary, state.EventHeld:
 		extra = append(extra, digest(ev.Summary)...)
+	case state.EventHeartbeat:
+		if ev.Heartbeat != nil {
+			extra = append(extra,
+				fmt.Sprintf("%s configured, %d currently down", plural(ev.Heartbeat.Checks, "check"), ev.Heartbeat.Down),
+				fmt.Sprintf("%s closed since the last heartbeat", plural(ev.Heartbeat.Closed, "incident")))
+		}
 	}
 	if len(extra) == 0 {
 		return head
@@ -254,6 +262,8 @@ func headline(ev state.Event) string {
 			n = ev.Summary.Count
 		}
 		return fmt.Sprintf("mute ended, %s held for %s", plural(n, "alert"), muteScope(ev))
+	case state.EventHeartbeat:
+		return "lookout is alive"
 	}
 	if ev.Result.Outcome == check.OutcomeMalformed {
 		return name + " no longer answers as expected"
@@ -298,6 +308,12 @@ func line(ev state.Event) string {
 		return name + " — delegated again"
 	case state.EventSummary, state.EventHeld:
 		return headline(ev)
+	case state.EventHeartbeat:
+		if ev.Heartbeat == nil {
+			return "lookout is alive"
+		}
+		return fmt.Sprintf("lookout is alive — %s, %d down, %s closed",
+			plural(ev.Heartbeat.Checks, "check"), ev.Heartbeat.Down, plural(ev.Heartbeat.Closed, "incident"))
 	}
 	if c := cause(ev.Result); c != "" {
 		return name + " — " + clip(oneLine(c), 120)

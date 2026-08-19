@@ -159,6 +159,11 @@ func validate(args []string, out io.Writer) error {
 			fmt.Fprintf(out, "reminders: %s, then every %s while an outage stays open\n",
 				strings.Join(parts, ", "), cfg.Alerting.Reminders[len(cfg.Alerting.Reminders)-1])
 		}
+		if cfg.Alerting.Heartbeat <= 0 {
+			fmt.Fprintln(out, "heartbeat: off — lookout will never send a still-alive message")
+		} else {
+			fmt.Fprintf(out, "heartbeat: every %s\n", cfg.Alerting.Heartbeat)
+		}
 		if os.Getenv(config.EnvTelegramToken) == "" || os.Getenv(config.EnvTelegramChatID) == "" {
 			fmt.Fprintf(out, "note: %s and %s must be set for lookout run to start\n",
 				config.EnvTelegramToken, config.EnvTelegramChatID)

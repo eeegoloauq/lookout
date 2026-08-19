@@ -61,6 +61,11 @@ type Monitor struct {
 	daysDirty bool
 	wakeHolds chan struct{}
 
+	beatMu     sync.Mutex
+	lastBeat   time.Time
+	closedBeat int
+	beatDirty  bool
+
 	sem         chan struct{}
 	saveMu      sync.Mutex
 	restoreOnce sync.Once
@@ -164,6 +169,13 @@ func (m *Monitor) Run(ctx context.Context) error {
 		defer wg.Done()
 		m.watchDays(ctx)
 	}()
+	if m.pipeline != nil && m.cfg.Alerting.Heartbeat > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.watchHeartbeat(ctx)
+		}()
+	}
 	for _, c := range m.cfg.Checks {
 		wg.Add(1)
 		go func() {
@@ -205,6 +217,10 @@ func (m *Monitor) restore() {
 		m.days = map[string]state.DayAcc{}
 	}
 	m.daysMu.Unlock()
+	m.beatMu.Lock()
+	m.lastBeat = snap.LastHeartbeat
+	m.closedBeat = snap.ClosedSinceHeartbeat
+	m.beatMu.Unlock()
 	if err := m.histLog.Load(); err != nil {
 		m.log.Warn("starting with empty history file", "path", m.histLog.Path(), "err", err)
 	}
@@ -297,10 +313,13 @@ func (m *Monitor) probe(ctx context.Context, c config.Check) {
 		if ev.Kind == state.EventDown {
 			incidents++
 		}
+		if ev.Kind == state.EventUp {
+			m.noteClosed()
+		}
 		m.emit(ev)
 	}
 	m.recordDay(c, res, incidents)
-	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) || registryDirty(m.prober) || m.book.Dirty() || m.daysAreDirty() {
+	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) || registryDirty(m.prober) || m.book.Dirty() || m.daysAreDirty() || m.heartbeatDirty() {
 		m.save()
 	}
 }
@@ -375,6 +394,12 @@ func (m *Monitor) logEvent(ev state.Event) {
 		}
 		attrs = append(attrs, "held", n)
 		m.log.Info("mute ended", attrs...)
+	case state.EventHeartbeat:
+		checks, down, closed := 0, 0, 0
+		if ev.Heartbeat != nil {
+			checks, down, closed = ev.Heartbeat.Checks, ev.Heartbeat.Down, ev.Heartbeat.Closed
+		}
+		m.log.Info("lookout is alive", "checks", checks, "down", down, "closed", closed)
 	}
 }
 
@@ -389,7 +414,8 @@ func (m *Monitor) save() {
 	regDirty := registryDirty(m.prober)
 	holdsDirty := m.book.Dirty()
 	daysDirty := m.daysAreDirty()
-	if !machineDirty && !outboxDirty && !regDirty && !holdsDirty && !daysDirty {
+	beatDirty := m.heartbeatDirty()
+	if !machineDirty && !outboxDirty && !regDirty && !holdsDirty && !daysDirty && !beatDirty {
 		return
 	}
 	m.machine.ClearDirty()
@@ -398,6 +424,7 @@ func (m *Monitor) save() {
 	}
 	m.book.ClearDirty()
 	m.clearDaysDirty()
+	m.clearHeartbeatDirty()
 	if rv, ok := m.prober.(registryView); ok {
 		rv.ClearRegistryDirty()
 	}
@@ -409,6 +436,10 @@ func (m *Monitor) save() {
 	m.daysMu.Lock()
 	snap.Days = cloneDays(m.days)
 	m.daysMu.Unlock()
+	m.beatMu.Lock()
+	snap.LastHeartbeat = m.lastBeat
+	snap.ClosedSinceHeartbeat = m.closedBeat
+	m.beatMu.Unlock()
 	if m.pipeline != nil {
 		snap.Outbox = m.pipeline.Snapshot()
 	} else {
@@ -587,6 +618,99 @@ func (m *Monitor) watchDays(ctx context.Context) {
 			m.rollDays(time.Now())
 		}
 	}
+}
+
+func (m *Monitor) watchHeartbeat(ctx context.Context) {
+	for {
+		delay := m.heartbeatDelay(time.Now())
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			m.beat(time.Now())
+		}
+	}
+}
+
+func (m *Monitor) heartbeatDelay(now time.Time) time.Duration {
+	interval := m.cfg.Alerting.Heartbeat
+	m.beatMu.Lock()
+	last := m.lastBeat
+	m.beatMu.Unlock()
+	if last.IsZero() {
+		return 0
+	}
+	d := last.Add(interval).Sub(now)
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// beat queues at most one still-alive event. A missed week is one
+// message, not one per skipped interval: catching up would page the
+// operator for lookout having been down, which they already know.
+func (m *Monitor) beat(now time.Time) {
+	if m.cfg.Alerting.Heartbeat <= 0 {
+		return
+	}
+	down := m.downCount()
+	m.beatMu.Lock()
+	if !m.lastBeat.IsZero() && now.Before(m.lastBeat.Add(m.cfg.Alerting.Heartbeat)) {
+		m.beatMu.Unlock()
+		return
+	}
+	closed := m.closedBeat
+	m.closedBeat = 0
+	m.lastBeat = now
+	m.beatDirty = true
+	m.beatMu.Unlock()
+
+	m.emit(state.Event{
+		Kind:  state.EventHeartbeat,
+		At:    now,
+		Alert: true,
+		Heartbeat: &state.Heartbeat{
+			Checks: len(m.cfg.Checks),
+			Down:   down,
+			Closed: closed,
+		},
+	})
+	m.save()
+}
+
+func (m *Monitor) downCount() int {
+	n := 0
+	for _, c := range m.cfg.Checks {
+		if m.machine.Status(c.Name) == state.StatusDown {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *Monitor) noteClosed() {
+	if m.cfg.Alerting.Heartbeat <= 0 {
+		return
+	}
+	m.beatMu.Lock()
+	m.closedBeat++
+	m.beatDirty = true
+	m.beatMu.Unlock()
+}
+
+func (m *Monitor) heartbeatDirty() bool {
+	m.beatMu.Lock()
+	defer m.beatMu.Unlock()
+	return m.beatDirty
+}
+
+func (m *Monitor) clearHeartbeatDirty() {
+	m.beatMu.Lock()
+	defer m.beatMu.Unlock()
+	m.beatDirty = false
 }
 
 func (m *Monitor) daysAreDirty() bool {

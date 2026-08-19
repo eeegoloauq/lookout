@@ -72,10 +72,15 @@ validation error rather than a silently empty header.
   Events that mature inside `batch_window` (default 45s) leave as one
   message: one emoji for the worst of them, a counting headline, one line per
   check. An outage that stays open repeats on an escalating schedule
-  (`reminders`, default 1h/4h/then daily). The HTTP client speaks SOCKS5 because
-  `api.telegram.org` is often unreachable directly. Token and chat id come
-  from `LOOKOUT_TELEGRAM_TOKEN` and `LOOKOUT_TELEGRAM_CHAT_ID` — never from
-  the config file.
+  (`reminders`, default 1h/4h/then daily). A configurable still-alive
+  ping (`alerting.heartbeat`, a duration; `0` or omitted means off) goes
+  through the same outbox, so a dead lookout is not mistaken for a quiet
+  one and a restart does not re-page. `lookout test-alert` sends one
+  line through the same credentials `run` uses and exits 0 only if the
+  Bot API confirms delivery; it does not touch the state file. The HTTP
+  client speaks SOCKS5 because `api.telegram.org` is often unreachable
+  directly. Token and chat id come from `LOOKOUT_TELEGRAM_TOKEN` and
+  `LOOKOUT_TELEGRAM_CHAT_ID` — never from the config file.
 
 - **A status page** that is a board, not a dashboard: groups as headings, one
   line per check, and every line opens into what it watches, why it last

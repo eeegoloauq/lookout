@@ -315,6 +315,58 @@ func TestRemindersRejectAPagingGap(t *testing.T) {
 	}
 }
 
+// A still-alive message that fires because nobody wrote the key is how
+// Gatus-style defaults go silent-wrong in the other direction: the
+// operator did not ask to be paged weekly.
+func TestHeartbeatDefaultsToOff(t *testing.T) {
+	if got := mustLoad(t, minimal).Alerting.Heartbeat; got != 0 {
+		t.Errorf("heartbeat = %s, want off", got)
+	}
+}
+
+// 168h is the weekly cadence SPEC §12 names; the parser has to accept
+// a duration that long, not just the short forms batch_window uses.
+func TestHeartbeatOverride(t *testing.T) {
+	cfg := mustLoad(t, minimal+"\nalerting:\n  heartbeat: 168h\n")
+	if cfg.Alerting.Heartbeat != 168*time.Hour {
+		t.Errorf("heartbeat = %s, want 168h", cfg.Alerting.Heartbeat)
+	}
+}
+
+// An explicit 0 is how to keep the key in the file and still mean off.
+func TestHeartbeatZeroTurnsItOff(t *testing.T) {
+	cfg := mustLoad(t, minimal+"\nalerting:\n  heartbeat: 0s\n")
+	if cfg.Alerting.Heartbeat != 0 {
+		t.Errorf("heartbeat = %s, want off", cfg.Alerting.Heartbeat)
+	}
+}
+
+// YAML 0 is an integer, not "0s". Rejecting it would make the documented
+// "0 means off" fail for the spelling an operator actually writes.
+func TestHeartbeatBareZeroTurnsItOff(t *testing.T) {
+	cfg := mustLoad(t, minimal+"\nalerting:\n  heartbeat: 0\n")
+	if cfg.Alerting.Heartbeat != 0 {
+		t.Errorf("heartbeat = %s, want off", cfg.Alerting.Heartbeat)
+	}
+}
+
+// A typo must fail at validate, not become a silently disabled deadman.
+func TestHeartbeatRejectsGarbageTheWayBatchWindowDoes(t *testing.T) {
+	_, err := Load("config.yaml", []byte(minimal+"\nalerting:\n  heartbeat: tomorrow\n"))
+	if err == nil || !strings.Contains(err.Error(), "alerting.heartbeat") || !strings.Contains(err.Error(), "is not a duration") {
+		t.Fatalf("err = %v, want the same duration complaint batch_window uses", err)
+	}
+}
+
+// A negative interval cannot mean "off" or "soon": those are 0 and a
+// positive duration, and mixing them in would make the next ping undated.
+func TestHeartbeatRejectsANegativeInterval(t *testing.T) {
+	_, err := Load("config.yaml", []byte(minimal+"\nalerting:\n  heartbeat: -1h\n"))
+	if err == nil || !strings.Contains(err.Error(), "alerting.heartbeat") {
+		t.Fatalf("err = %v, want a complaint about the negative interval", err)
+	}
+}
+
 func TestAlertingModeDefaultsToTelegram(t *testing.T) {
 	if got := mustLoad(t, minimal).Alerting.Mode; got != ModeTelegram {
 		t.Errorf("mode = %q, want %q", got, ModeTelegram)

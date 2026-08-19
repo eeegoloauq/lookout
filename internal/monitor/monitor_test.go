@@ -626,6 +626,165 @@ checks:
 	})
 }
 
+func heartbeatCfg(t *testing.T, extra string) *config.Config {
+	t.Helper()
+	return testConfig(t, `
+alerting:
+  batch_window: 45s
+  heartbeat: 1h
+`+extra+`
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+    failure_threshold: 1
+    success_threshold: 1
+`)
+}
+
+// A dead lookout looks exactly like a quiet homelab. The first still-alive
+// message has to leave without waiting a week, or the deadman never arms.
+func TestHeartbeatFiresOnAFreshStart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		n := &recordingNotifier{}
+		runFor(t, New(heartbeatCfg(t, ""), newFakeProber(), WithLogger(quietLogger()), WithNotifier(n)), time.Minute)
+		got := n.got()
+		if len(got) != 1 {
+			t.Fatalf("delivered %d messages, want the first heartbeat: %v", len(got), got)
+		}
+		if !strings.Contains(got[0], "lookout is alive") {
+			t.Errorf("message = %q", got[0])
+		}
+	})
+}
+
+// A restart is not a new week. Re-paging on every boot would train the
+// operator to ignore the still-alive message.
+func TestHeartbeatDoesNotRepageOnRestart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := heartbeatCfg(t, "")
+		n := &recordingNotifier{}
+		runFor(t, New(cfg, newFakeProber(), WithLogger(quietLogger()), WithNotifier(n)), time.Minute)
+		if len(n.got()) != 1 {
+			t.Fatalf("first run delivered %d, want 1: %v", len(n.got()), n.got())
+		}
+		n2 := &recordingNotifier{}
+		runFor(t, New(cfg, newFakeProber(), WithLogger(quietLogger()), WithNotifier(n2)), 30*time.Minute)
+		if len(n2.got()) != 0 {
+			t.Fatalf("restart re-sent the heartbeat: %v", n2.got())
+		}
+	})
+}
+
+// A week of downtime is one missed ping, not seven. Catching up would page
+// the operator for lookout having been down, which they already know.
+func TestHeartbeatCatchUpIsOneMessage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := heartbeatCfg(t, "")
+		snap := state.Snapshot{
+			Version:       state.SnapshotVersion,
+			Checks:        map[string]state.CheckState{},
+			LastHeartbeat: time.Now().Add(-8 * time.Hour),
+		}
+		if err := state.NewStore(cfg.StateFile).Save(snap); err != nil {
+			t.Fatal(err)
+		}
+		n := &recordingNotifier{}
+		runFor(t, New(cfg, newFakeProber(), WithLogger(quietLogger()), WithNotifier(n)), time.Minute)
+		if len(n.got()) != 1 {
+			t.Fatalf("after 8h down delivered %d, want 1: %v", len(n.got()), n.got())
+		}
+	})
+}
+
+// The still-alive ping is an alert like any other: a dead channel must
+// not drop it, and an outage that matures in the same window must share
+// the message rather than steal the slot.
+func TestHeartbeatBatchesWithAnOutage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := heartbeatCfg(t, "")
+		p := newFakeProber()
+		p.outcome = func(string, int) check.Outcome { return check.OutcomeDown }
+		n := &recordingNotifier{}
+		runFor(t, New(cfg, p, WithLogger(quietLogger()), WithNotifier(n)), time.Minute)
+		got := n.got()
+		if len(got) != 1 {
+			t.Fatalf("got %d messages, want one batch: %v", len(got), got)
+		}
+		if !strings.Contains(got[0], "Photos") || !strings.Contains(got[0], "lookout is alive") {
+			t.Errorf("batch missing an event:\n%s", got[0])
+		}
+	})
+}
+
+// The closed-incident count is why the ping exists besides "N checks":
+// a week of flapping that recovered has to show up, or the message
+// reads as if nothing happened.
+func TestHeartbeatCountsIncidentsClosedSinceLastPing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := heartbeatCfg(t, "")
+		snap := state.Snapshot{
+			Version:       state.SnapshotVersion,
+			Checks:        map[string]state.CheckState{},
+			LastHeartbeat: time.Now(),
+		}
+		if err := state.NewStore(cfg.StateFile).Save(snap); err != nil {
+			t.Fatal(err)
+		}
+		p := newFakeProber()
+		p.outcome = func(_ string, n int) check.Outcome {
+			if n == 0 {
+				return check.OutcomeDown
+			}
+			return check.OutcomeUp
+		}
+		n := &recordingNotifier{}
+		runFor(t, New(cfg, p, WithLogger(quietLogger()), WithNotifier(n)), time.Hour+45*time.Second+time.Second)
+		got := n.got()
+		var ping string
+		for _, msg := range got {
+			if strings.Contains(msg, "lookout is alive") {
+				ping = msg
+			}
+		}
+		if ping == "" {
+			t.Fatalf("no heartbeat in %v", got)
+		}
+		if !strings.Contains(ping, "1 incident closed since the last heartbeat") {
+			t.Errorf("closed count missing:\n%s", ping)
+		}
+		if !strings.Contains(ping, "0 currently down") {
+			t.Errorf("down count missing:\n%s", ping)
+		}
+	})
+}
+
+// Off has to be silence, not a forgotten weekly default. An operator
+// who did not ask for a still-alive message must not get one.
+func TestHeartbeatOffSendsNothing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testConfig(t, `
+alerting:
+  batch_window: 45s
+  heartbeat: 0s
+checks:
+  - name: Photos
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+`)
+		n := &recordingNotifier{}
+		runFor(t, New(cfg, newFakeProber(), WithLogger(quietLogger()), WithNotifier(n)), 2*time.Hour)
+		if len(n.got()) != 0 {
+			t.Fatalf("heartbeat: 0 still sent: %v", n.got())
+		}
+	})
+}
+
 var errUnavailable = errString("telegram unreachable")
 
 type errString string

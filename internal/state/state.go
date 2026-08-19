@@ -159,6 +159,15 @@ type Snapshot struct {
 	// so a restart at 23:00 does not lose the day. Flushed to the
 	// JSONL history file at midnight (SPEC §9.3).
 	Days map[string]DayAcc `json:"days,omitempty"`
+
+	// LastHeartbeat is when the still-alive message was last queued.
+	// Durable so a restart cannot turn a weekly ping into one per boot,
+	// and a week of downtime cannot queue seven of them (SPEC §12).
+	LastHeartbeat time.Time `json:"last_heartbeat,omitzero"`
+	// ClosedSinceHeartbeat is how many confirmed recoveries have been
+	// recorded since LastHeartbeat. Capped incident logs would under-count
+	// a noisy week; this counter is the number the next ping should say.
+	ClosedSinceHeartbeat int `json:"closed_since_heartbeat,omitempty"`
 }
 
 // Hold is one active mute. Until is when it lifts. Suppressed is the

@@ -98,6 +98,31 @@ func TestRunRequiresTelegramCredentials(t *testing.T) {
 	}
 }
 
+// The cadence is the setting most likely to surprise after reminders:
+// a missing still-alive message is only trustworthy when it was asked for.
+func TestValidateNotesHeartbeatOff(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := run([]string{"validate", write(t, valid)}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "heartbeat: off") {
+		t.Errorf("validate output = %q, want heartbeat off named the way reminders are", out.String())
+	}
+}
+
+// Same reason reminders are printed: a weekly ping nobody noticed
+// in the file is how a deadman fails closed.
+func TestValidateNotesHeartbeatSchedule(t *testing.T) {
+	var out, errOut bytes.Buffer
+	src := valid + "\nalerting:\n  heartbeat: 168h\n"
+	if err := run([]string{"validate", write(t, src)}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "heartbeat: every") || !strings.Contains(out.String(), "168h") {
+		t.Errorf("validate output = %q, want the heartbeat cadence", out.String())
+	}
+}
+
 func TestValidateNotesMissingTelegramCredentials(t *testing.T) {
 	t.Setenv("LOOKOUT_TELEGRAM_TOKEN", "")
 	t.Setenv("LOOKOUT_TELEGRAM_CHAT_ID", "")
