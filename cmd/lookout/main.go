@@ -134,6 +134,7 @@ func validate(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "state file: %s\n", cfg.StateFile)
 	fmt.Fprintf(out, "history file: %s\n", cfg.HistoryFile)
+	fmt.Fprintf(out, "samples file: %s\n", cfg.SamplesFile)
 	fmt.Fprintf(out, "listen: %s\n", cfg.Listen)
 	if n := len(cfg.Mute); n > 0 {
 		fmt.Fprintf(out, "mute windows: %s\n", plural(n, "schedule"))

@@ -12,9 +12,9 @@ one.
 
 Status: early development. `SPEC.md` is the design (in Russian); this release
 covers the check model, HTTP/DNS/domain probes, the threshold and instability
-state machine, durable state, the recent-history ring, Telegram alert delivery,
-the status page / API / metrics, mute windows, long-term JSONL history, and a
-hardened systemd unit.
+state machine, durable state, the recent-history ring (seeded across restarts),
+Telegram alert delivery, the status page / API / metrics, mute windows,
+long-term JSONL history, and a hardened systemd unit.
 
 ## Build
 
@@ -62,7 +62,8 @@ validation error rather than a silently empty header.
   counter — a check alternating up and down delivers half its requests and
   would otherwise never alert at all.
 - **Durable state** in one atomically written JSON file, and 24 hours of recent
-  results per check in memory.
+  results per check in memory, seeded from a JSONL file so a restart does not
+  blank the 24-hour bar.
 - **A scheduler** that computes ticks from a fixed origin, offset by a hash of
   the check name: no drift behind a slow target, no thundering herd, and the
   same spread after every restart.
@@ -124,7 +125,10 @@ validation error rather than a silently empty header.
   `/api/status`, and it survives a restart.
 - **Long-term history** — one JSON Lines record per check per UTC day
   (uptime, incidents, p50/p95). The in-progress day lives in the state
-  file so a restart neither duplicates nor loses it.
+  file so a restart neither duplicates nor loses it. The last 24 hours of
+  individual samples are a separate JSONL seed (`state.samples`, default
+  `samples.jsonl` beside the state file): it is replayed into the
+  in-memory ring on start, then the ring is the source of truth again.
 
 ## Deploy
 
@@ -148,8 +152,8 @@ systemctl daemon-reload
 systemctl enable --now lookout
 ```
 
-`state.file` and `state.history` in the config should point at
-`/var/lib/lookout/` so `ProtectSystem=strict` still lets lookout write.
+`state.file`, `state.history` and `state.samples` in the config should
+point at `/var/lib/lookout/` so `ProtectSystem=strict` still lets lookout write.
 
 ## Tests
 

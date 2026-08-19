@@ -111,6 +111,7 @@ type Config struct {
 	RegistrationGroup string
 	StateFile         string
 	HistoryFile       string
+	SamplesFile       string
 	Alerting          Alerting
 	Mute              []MuteWindow
 	Checks            []Check

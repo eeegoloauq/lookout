@@ -54,6 +54,7 @@ type fileTelegram struct {
 type fileState struct {
 	File    *string `yaml:"file"`
 	History *string `yaml:"history"`
+	Samples *string `yaml:"samples"`
 }
 
 // fileMute is one static quiet window. Cron is accepted only so we can
@@ -218,6 +219,16 @@ func resolve(c *collector, raw *fileConfig) *Config {
 			}
 		}
 	}
+	cfg.SamplesFile = defaultSamplesFile(cfg.StateFile)
+	if raw.State != nil && raw.State.Samples != nil {
+		if v, ok := expand(c, "state.samples", *raw.State.Samples); ok {
+			if strings.TrimSpace(v) == "" {
+				c.addf("state.samples", "samples file path is empty")
+			} else {
+				cfg.SamplesFile = v
+			}
+		}
+	}
 
 	if raw.Alerting != nil {
 		resolveAlerting(c, raw.Alerting, &cfg.Alerting)
@@ -258,11 +269,19 @@ func resolve(c *collector, raw *fileConfig) *Config {
 }
 
 func defaultHistoryFile(stateFile string) string {
+	return defaultBesideState(stateFile, "history.jsonl")
+}
+
+func defaultSamplesFile(stateFile string) string {
+	return defaultBesideState(stateFile, "samples.jsonl")
+}
+
+func defaultBesideState(stateFile, name string) string {
 	dir := filepath.Dir(stateFile)
 	if dir == "." || dir == "" {
-		return "history.jsonl"
+		return name
 	}
-	return filepath.Join(dir, "history.jsonl")
+	return filepath.Join(dir, name)
 }
 
 // defaultOrigin records which scalars the defaults block actually set, so a

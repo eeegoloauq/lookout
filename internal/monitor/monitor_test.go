@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -77,6 +78,7 @@ func testConfig(t *testing.T, checks string) *config.Config {
 	dir := t.TempDir()
 	cfg.StateFile = filepath.Join(dir, "state.json")
 	cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
+	cfg.SamplesFile = filepath.Join(dir, "samples.jsonl")
 	return cfg
 }
 
@@ -554,6 +556,88 @@ checks:
 			t.Fatalf("digest of muted events was lost: %v", n2.got())
 		}
 	})
+}
+
+// The 24-hour bar is why this process exists. A deploy that blanks it
+// makes the board lie about the only window anyone looks at.
+func TestRestartKeepsThe24HourHistory(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cfg := testConfig(t, `
+checks:
+  - name: Photos
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+`)
+		p := newFakeProber()
+		p.duration = 40 * time.Millisecond
+		p.outcome = func(_ string, n int) check.Outcome {
+			if n%4 == 0 {
+				return check.OutcomeDown
+			}
+			return check.OutcomeUp
+		}
+		m := New(cfg, p, WithLogger(quietLogger()))
+		runFor(t, m, 3*time.Hour)
+
+		ring, ok := m.History().Ring("Photos")
+		if !ok {
+			t.Fatal("no ring")
+		}
+		wantPoints := ring.Points()
+		wantRatio, wantSamples := ring.Uptime(time.Now().Add(-history.Retention))
+		if wantSamples == 0 {
+			t.Fatal("first process wrote no samples")
+		}
+
+		m2 := New(cfg, newFakeProber(), WithLogger(quietLogger()))
+		m2.Restore()
+		ring2, ok := m2.History().Ring("Photos")
+		if !ok {
+			t.Fatal("restart lost the ring")
+		}
+		got := ring2.Points()
+		if len(got) != len(wantPoints) {
+			t.Fatalf("restart held %d points, want %d", len(got), len(wantPoints))
+		}
+		for i := range wantPoints {
+			if got[i].At.Unix() != wantPoints[i].At.Unix() ||
+				got[i].Outcome != wantPoints[i].Outcome ||
+				got[i].Duration.Milliseconds() != wantPoints[i].Duration.Milliseconds() ||
+				got[i].StatusCode != wantPoints[i].StatusCode {
+				t.Fatalf("point %d after restart = %+v, want %+v", i, got[i], wantPoints[i])
+			}
+		}
+		ratio, samples := ring2.Uptime(time.Now().Add(-history.Retention))
+		if samples != wantSamples || ratio != wantRatio {
+			t.Fatalf("uptime after restart = %v over %d, want %v over %d", ratio, samples, wantRatio, wantSamples)
+		}
+	})
+}
+
+// A crash mid-write is a truncated last line, not a reason to stay
+// down. A monitor that will not start is a silent one.
+func TestCorruptSamplesFileDoesNotStopStartup(t *testing.T) {
+	cfg := testConfig(t, `
+checks:
+  - name: Photos
+    type: http
+    url: http://photos.invalid
+    interval: 60s
+    timeout: 5s
+`)
+	now := time.Now().UTC().Truncate(time.Second)
+	good := []byte(`{"t":` + strconv.FormatInt(now.Unix(), 10) + `,"c":"Photos","o":"up","ms":40,"s":200}` + "\n" + `{"t":1,"c":"Pho`)
+	if err := os.WriteFile(cfg.SamplesFile, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := New(cfg, newFakeProber(), WithLogger(quietLogger()))
+	m.Restore()
+	ring, ok := m.History().Ring("Photos")
+	if !ok || ring.Len() != 1 {
+		t.Fatalf("ring after corrupt tail = %v, want the one good sample", ring)
+	}
 }
 
 func TestDailyHistoryFlushesAtUTCMidnightAndSurvivesRestart(t *testing.T) {

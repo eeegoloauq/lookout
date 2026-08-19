@@ -1,10 +1,10 @@
 // Package history keeps the recent result history of every check in memory:
 // a fixed ring per check, holding the last 24 hours (SPEC §9.2).
 //
-// This history is deliberately not durable. It feeds the status page, the
-// 24-hour uptime figure and the response-time baseline; a restart loses it,
-// which costs a graph and nothing else. Anything a restart must not lose lives
-// in the durable state instead.
+// The ring is the source of truth while lookout is running. A JSONL seed
+// file is replayed into the rings on start so a restart does not blank the
+// 24-hour bar; it is not a database. Anything a restart must not lose
+// (incident state, the outbox) lives in the durable state instead.
 package history
 
 import (

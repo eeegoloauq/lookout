@@ -51,6 +51,7 @@ func testMonitor(t *testing.T, src string) *monitor.Monitor {
 	dir := t.TempDir()
 	cfg.StateFile = filepath.Join(dir, "state.json")
 	cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
+	cfg.SamplesFile = filepath.Join(dir, "samples.jsonl")
 	return monitor.New(cfg, nil, monitor.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 }
 
@@ -493,6 +494,7 @@ checks:
 		dir := t.TempDir()
 		cfg.StateFile = filepath.Join(dir, "state.json")
 		cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
+		cfg.SamplesFile = filepath.Join(dir, "samples.jsonl")
 		m := monitor.New(cfg, scriptedProber{outcome: check.OutcomeDown},
 			monitor.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 			monitor.WithNotifier(failNotifier{err: errString("telegram unreachable")}),

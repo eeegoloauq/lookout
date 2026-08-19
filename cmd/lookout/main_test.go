@@ -143,6 +143,7 @@ func TestMuteCommandTalksToTheRunningProcess(t *testing.T) {
 	}
 	cfg.StateFile = filepath.Join(dir, "state.json")
 	cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
+	cfg.SamplesFile = filepath.Join(dir, "samples.jsonl")
 	m := monitor.New(cfg, nil, monitor.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	srv := httptest.NewServer(web.New(m, "test"))
 	defer srv.Close()

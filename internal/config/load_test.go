@@ -632,6 +632,30 @@ checks:
 	}
 }
 
+// Same reason state.history is next to the state file: a separate
+// volume is a second thing to forget when ProtectSystem=strict.
+func TestSamplesFileDefaultsBesideStateFile(t *testing.T) {
+	cfg := mustLoad(t, minimal)
+	if cfg.SamplesFile != "samples.jsonl" {
+		t.Errorf("samples = %q, want it next to the default state file", cfg.SamplesFile)
+	}
+	cfg = mustLoad(t, `
+state:
+  file: /var/lib/lookout/state.json
+  samples: /var/lib/lookout/samples.jsonl
+checks:
+  - name: Example
+    type: http
+    url: http://example.invalid
+`)
+	if cfg.StateFile != "/var/lib/lookout/state.json" || cfg.SamplesFile != "/var/lib/lookout/samples.jsonl" {
+		t.Errorf("state=%q samples=%q", cfg.StateFile, cfg.SamplesFile)
+	}
+	if _, err := Load("config.yaml", []byte("state:\n  samples: \"\"\n"+minimal)); err == nil {
+		t.Error("an empty state.samples must not load")
+	}
+}
+
 // Clocks on the status page are for a person; the timezone is theirs to
 // choose, and an unknown one is a config error rather than a silent UTC.
 func TestTimezoneOverride(t *testing.T) {

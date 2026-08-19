@@ -56,6 +56,7 @@ type Monitor struct {
 
 	book      *mute.Book
 	histLog   *history.Log
+	samples   *history.Samples
 	days      map[string]state.DayAcc
 	daysMu    sync.Mutex
 	daysDirty bool
@@ -98,6 +99,14 @@ func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
 			cfg.HistoryFile = filepath.Join(dir, "history.jsonl")
 		}
 	}
+	if cfg.SamplesFile == "" {
+		dir := filepath.Dir(cfg.StateFile)
+		if dir == "." || dir == "" {
+			cfg.SamplesFile = "samples.jsonl"
+		} else {
+			cfg.SamplesFile = filepath.Join(dir, "samples.jsonl")
+		}
+	}
 	m := &Monitor{
 		cfg:       cfg,
 		prober:    prober,
@@ -105,6 +114,7 @@ func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
 		machine:   state.NewMachine(),
 		hist:      history.New(),
 		histLog:   history.NewLog(cfg.HistoryFile),
+		samples:   history.NewSamples(cfg.SamplesFile),
 		book:      mute.NewBook(cfg.Mute),
 		days:      map[string]state.DayAcc{},
 		wakeHolds: make(chan struct{}, 1),
@@ -169,6 +179,11 @@ func (m *Monitor) Run(ctx context.Context) error {
 		defer wg.Done()
 		m.watchDays(ctx)
 	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		m.watchSamples(ctx)
+	}()
 	if m.pipeline != nil && m.cfg.Alerting.Heartbeat > 0 {
 		wg.Add(1)
 		go func() {
@@ -187,6 +202,9 @@ func (m *Monitor) Run(ctx context.Context) error {
 
 	// The last results are worth as much as the first: persist before exiting.
 	m.save()
+	if err := m.samples.Close(); err != nil {
+		m.log.Error("could not flush samples", "path", m.samples.Path(), "err", err)
+	}
 	return nil
 }
 
@@ -223,6 +241,13 @@ func (m *Monitor) restore() {
 	m.beatMu.Unlock()
 	if err := m.histLog.Load(); err != nil {
 		m.log.Warn("starting with empty history file", "path", m.histLog.Path(), "err", err)
+	}
+	recs, err := m.samples.Load(time.Now())
+	if err != nil {
+		m.log.Warn("starting with empty samples file", "path", m.samples.Path(), "err", err)
+	}
+	for _, rec := range recs {
+		m.hist.Record(rec)
 	}
 	if m.pipeline != nil {
 		m.pipeline.Restore(snap.Outbox)
@@ -300,6 +325,9 @@ func (m *Monitor) probe(ctx context.Context, c config.Check) {
 	}
 
 	m.hist.Record(res)
+	if err := m.samples.Append(res); err != nil {
+		m.log.Error("could not append sample", "path", m.samples.Path(), "err", err)
+	}
 	m.log.Debug("probe",
 		"check", c.Name,
 		"outcome", string(res.Outcome),
@@ -616,6 +644,24 @@ func (m *Monitor) watchDays(ctx context.Context) {
 			return
 		case <-timer.C:
 			m.rollDays(time.Now())
+			if err := m.samples.Prune(time.Now()); err != nil {
+				m.log.Error("could not prune samples", "path", m.samples.Path(), "err", err)
+			}
+		}
+	}
+}
+
+func (m *Monitor) watchSamples(ctx context.Context) {
+	ticker := time.NewTicker(history.SampleFlushEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := m.samples.Flush(); err != nil {
+				m.log.Error("could not flush samples", "path", m.samples.Path(), "err", err)
+			}
 		}
 	}
 }

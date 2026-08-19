@@ -55,8 +55,9 @@ type CheckStatus struct {
 	Status     string `json:"status"`
 	Unstable   bool   `json:"unstable"`
 
-	// LastProbe is null until the first result lands. A restart starts
-	// from empty history, which must read as "no data", not as failure.
+	// LastProbe is null until a result exists (this process, or one
+	// replayed from the samples file). Missing samples must read as
+	// "no data", not as failure.
 	LastProbe *ProbeView `json:"last_probe"`
 	// Uptime24h is null when the ring has no samples: 0 would look like
 	// a total outage and 1 would look like perfect health (SPEC §9.2).

@@ -32,6 +32,10 @@ state:
   # One JSONL line per check per UTC day. Defaults to history.jsonl
   # beside the state file.
   history: /var/lib/lookout/history.jsonl
+  # Compact JSONL of recent probe results, one line per sample. Seeds
+  # the in-memory 24h ring after a restart. Defaults to samples.jsonl
+  # beside the state file.
+  samples: /var/lib/lookout/samples.jsonl
 
 defaults:
   interval: 60s
