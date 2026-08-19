@@ -64,10 +64,14 @@ type pageRow struct {
 	// out on a date.
 	Wide      string
 	WideClass string
-	Muted     bool
-	Timeline  []pageBucket
-	Facts     []pageFact
-	Incidents []pageIncident
+	// Badge is a short warning that rides next to the name: the site is
+	// answering fine, but the name it lives on runs out next week.
+	Badge      string
+	BadgeClass string
+	Muted      bool
+	Timeline   []pageBucket
+	Facts      []pageFact
+	Incidents  []pageIncident
 }
 
 // pageIncident is one closed outage in the row's history.
@@ -160,6 +164,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			row.Wide = registrationSummary(c, loc)
 			row.WideClass = expiryUrgency(c.DomainDaysLeft)
 		}
+		row.Badge, row.BadgeClass = registrationBadge(c)
 		row.Facts = facts(c, now, loc, row.Link != "")
 
 		name := c.Group
@@ -257,6 +262,30 @@ func expiryUrgency(days *int) string {
 	return ""
 }
 
+// registrationBadge warns on a site row when the name it lives on is about
+// to lapse. It stays silent the rest of the year: a badge that is always
+// there is furniture, and furniture is not read.
+func registrationBadge(c CheckStatus) (string, string) {
+	r := c.Registration
+	if r == nil {
+		return "", ""
+	}
+	if r.Delegated != nil && !*r.Delegated {
+		return "not delegated", "bad"
+	}
+	class := expiryUrgency(&r.DaysLeft)
+	if class == "" {
+		return "", ""
+	}
+	switch {
+	case r.DaysLeft < 0:
+		return "domain expired", class
+	case r.DaysLeft == 0:
+		return "domain expires today", class
+	}
+	return fmt.Sprintf("domain %dd", r.DaysLeft), class
+}
+
 // facts is the expanded panel: what the check watches, how it has behaved,
 // and what runs out. Absent data produces no line at all — an empty field
 // is a question the reader has to answer for themselves.
@@ -311,6 +340,21 @@ func facts(c CheckStatus, now time.Time, loc *time.Location, linked bool) []page
 	// is noise. A certificate has no column of its own and belongs here.
 	if e := expiryLine(c, loc, c.Type != "domain"); e != "" {
 		add("expires", e)
+	}
+	// The site itself can be perfectly healthy and still be a week away
+	// from disappearing, so its panel says when the name runs out.
+	if r := c.Registration; r != nil {
+		line := "registration " + formatDays(r.DaysLeft)
+		if r.ExpiresAt != nil {
+			line += " (" + r.ExpiresAt.In(loc).Format("2 Jan 2006") + ")"
+		}
+		if r.Name != "" {
+			line += " · " + r.Name
+		}
+		if r.Delegated != nil && !*r.Delegated {
+			line += " · NOT DELEGATED"
+		}
+		add("domain", line)
 	}
 	if c.DomainState != "" {
 		who := c.DomainState
@@ -400,8 +444,11 @@ func expiryLine(c CheckStatus, loc *time.Location, withDomain bool) string {
 func timeline(points []history.Point, now time.Time) []pageBucket {
 	slot := history.Retention / timelineBuckets
 	type acc struct {
-		ok, bad int
-		ms      []int64
+		ok, bad             int
+		ms                  []int64
+		worst               time.Duration
+		worstAt             time.Time
+		firstFail, lastFail time.Time
 	}
 	buckets := make([]acc, timelineBuckets)
 	for _, p := range points {
@@ -414,38 +461,67 @@ func timeline(points []history.Point, now time.Time) []pageBucket {
 		if p.Outcome == "unknown" || i < 0 || i >= timelineBuckets {
 			continue
 		}
+		b := &buckets[i]
 		if p.Outcome.Succeeded() {
-			buckets[i].ok++
+			b.ok++
 		} else {
-			buckets[i].bad++
+			b.bad++
+			if b.firstFail.IsZero() || p.At.Before(b.firstFail) {
+				b.firstFail = p.At
+			}
+			if p.At.After(b.lastFail) {
+				b.lastFail = p.At
+			}
 		}
 		if p.Duration > 0 {
-			buckets[i].ms = append(buckets[i].ms, p.Duration.Milliseconds())
+			b.ms = append(b.ms, p.Duration.Milliseconds())
+			if p.Duration > b.worst {
+				b.worst, b.worstAt = p.Duration, p.At
+			}
 		}
 	}
 	out := make([]pageBucket, timelineBuckets)
 	for i, b := range buckets {
 		from := now.Add(-time.Duration(timelineBuckets-i) * slot)
-		when := from.Format("15:04")
+		span := from.Format("15:04") + "–" + from.Add(slot).Format("15:04")
 		total := b.ok + b.bad
-		// Every slot carries its numbers, not only the failing ones: the
-		// question "was it slow at four in the morning" is asked of the
-		// green part of the bar too.
-		typical := ""
+		if total == 0 {
+			out[i] = pageBucket{Class: "n", Title: span + "\nno data"}
+			continue
+		}
+		// The tooltip is where the detail goes that the colour cannot
+		// carry: how many probes, how slow the worst one was and when,
+		// and the window the failures actually fell in.
+		lines := []string{span}
+		if b.bad > 0 {
+			lines = append(lines, fmt.Sprintf("%d of %d failed", b.bad, total))
+			if !b.firstFail.IsZero() {
+				fail := "failing " + b.firstFail.Format("15:04")
+				if b.lastFail.After(b.firstFail) {
+					fail += "–" + b.lastFail.Format("15:04")
+				}
+				lines = append(lines, fail)
+			}
+		} else {
+			lines = append(lines, fmt.Sprintf("%d ok", b.ok))
+		}
 		if len(b.ms) > 0 {
 			sort.Slice(b.ms, func(x, y int) bool { return b.ms[x] < b.ms[y] })
-			typical = " · " + formatLatency(time.Duration(percentile(b.ms, 50))*time.Millisecond) + " typical"
+			typical := formatLatency(time.Duration(percentile(b.ms, 50)) * time.Millisecond)
+			line := "typical " + typical
+			if b.worst > 0 && b.worst.Milliseconds() != percentile(b.ms, 50) {
+				line += " · worst " + formatLatency(b.worst) + " at " + b.worstAt.Format("15:04")
+			}
+			lines = append(lines, line)
 		}
+		class := "o"
 		switch {
 		case b.bad > 0 && b.ok == 0:
-			out[i] = pageBucket{Class: "b", Title: fmt.Sprintf("%s · all %d failed%s", when, b.bad, typical)}
+			class = "b"
 		case b.bad > 0:
-			out[i] = pageBucket{Class: "p", Title: fmt.Sprintf("%s · %d of %d failed%s", when, b.bad, total, typical)}
-		case b.ok > 0:
-			out[i] = pageBucket{Class: "o", Title: fmt.Sprintf("%s · %d ok%s", when, b.ok, typical)}
-		default:
-			out[i] = pageBucket{Class: "n", Title: when + " · no data"}
+			class = "p"
 		}
+		out[i] = pageBucket{Class: class, Title: strings.Join(lines, "\n")}
 	}
 	return out
 }

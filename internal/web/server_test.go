@@ -935,6 +935,8 @@ checks:
 
 // Every slot carries its numbers, not only the failing ones: "was it slow
 // at four in the morning" is a question about the green part of the bar.
+// A slot that failed says how many, in what window, and how bad the worst
+// answer was — the colour alone cannot carry that.
 func TestTimelineSlotsCarryTheirNumbers(t *testing.T) {
 	now := time.Now()
 	var points []history.Point
@@ -946,7 +948,7 @@ func TestTimelineSlotsCarryTheirNumbers(t *testing.T) {
 	}
 	buckets := timeline(points, now)
 	last := buckets[len(buckets)-1]
-	if !strings.Contains(last.Title, "ok") || !strings.Contains(last.Title, "62ms typical") {
+	if !strings.Contains(last.Title, "ok") || !strings.Contains(last.Title, "typical 62ms") {
 		t.Errorf("healthy slot has no tooltip: %q", last.Title)
 	}
 }
@@ -965,5 +967,107 @@ func TestExpiryUrgencyColoursTheDate(t *testing.T) {
 	}
 	if expiryUrgency(nil) != "" {
 		t.Error("an unknown expiry must not be coloured")
+	}
+}
+
+// A site that answers 200 every minute still dies on the day its
+// registration lapses. One `type: domain` check for the name is all the
+// wiring there is: every check whose URL lives under that name picks it up.
+func TestSiteBorrowsItsDomainExpiry(t *testing.T) {
+	const src = `
+checks:
+  - name: Site
+    group: Public Sites
+    type: http
+    url: https://shop.example.invalid/health
+  - name: Other
+    group: Public Sites
+    type: http
+    url: https://elsewhere.invalid/
+  - name: example.invalid
+    group: Domains
+    type: domain
+    domain: example.invalid
+    interval: 24h
+    success_threshold: 1
+`
+	m := testMonitor(t, src)
+	now := time.Now()
+	for _, c := range m.Config().Checks {
+		if c.Type != config.TypeDomain {
+			continue
+		}
+		m.Machine().Observe(c, check.Result{
+			Name: c.Name, At: now, Outcome: check.OutcomeUp,
+			DomainExpiresAt: now.Add(11*24*time.Hour + time.Hour), DomainState: "REGISTERED, DELEGATED",
+		})
+	}
+
+	var doc StatusDocument
+	if err := json.Unmarshal(get(t, New(m, "test"), "/api/status").Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	byName := map[string]CheckStatus{}
+	for _, c := range doc.Checks {
+		byName[c.Name] = c
+	}
+	if r := byName["Site"].Registration; r == nil || r.DaysLeft != 11 || r.Name != "example.invalid" {
+		t.Fatalf("subdomain did not inherit the registration: %+v", byName["Site"].Registration)
+	}
+	if byName["Other"].Registration != nil {
+		t.Error("an unrelated host borrowed someone else's registration")
+	}
+
+	body := get(t, New(m, "test"), "/").Body.String()
+	if !strings.Contains(body, "domain 11d") {
+		t.Errorf("site row carries no warning that its name is running out:\n%s", body)
+	}
+	if !strings.Contains(body, "registration 11 days") {
+		t.Errorf("site panel does not say when the name expires:\n%s", body)
+	}
+}
+
+// The badge is silent while there is nothing to do about it: a badge that
+// is always on the row is furniture, and furniture is not read.
+func TestRegistrationBadgeIsQuietUntilItMatters(t *testing.T) {
+	no := false
+	for _, tc := range []struct {
+		days  int
+		want  string
+		class string
+	}{{300, "", ""}, {15, "", ""}, {14, "domain 14d", "soon"}, {2, "domain 2d", "bad"}, {-1, "domain expired", "bad"}} {
+		got, class := registrationBadge(CheckStatus{Registration: &RegistrationView{DaysLeft: tc.days}})
+		if got != tc.want || class != tc.class {
+			t.Errorf("%d days = %q/%q, want %q/%q", tc.days, got, class, tc.want, tc.class)
+		}
+	}
+	// A name that lost its delegation is switched off today, whatever the
+	// paid-till date says.
+	got, class := registrationBadge(CheckStatus{Registration: &RegistrationView{DaysLeft: 300, Delegated: &no}})
+	if got != "not delegated" || class != "bad" {
+		t.Errorf("undelegated name = %q/%q", got, class)
+	}
+}
+
+func TestFailedSlotTooltipSaysWhenAndHowBad(t *testing.T) {
+	now := time.Now().Truncate(time.Minute)
+	var points []history.Point
+	for i := 30; i > 0; i-- {
+		at := now.Add(-time.Duration(i) * time.Minute)
+		p := history.Point{At: at, Outcome: check.OutcomeUp, Duration: 60 * time.Millisecond}
+		if i == 8 || i == 7 {
+			p.Outcome, p.Duration = check.OutcomeDown, 5*time.Second
+		}
+		points = append(points, p)
+	}
+	buckets := timeline(points, now)
+	last := buckets[len(buckets)-1]
+	for _, want := range []string{"2 of ", "failed", "failing ", "worst 5.0s at "} {
+		if !strings.Contains(last.Title, want) {
+			t.Errorf("tooltip %q missing %q", last.Title, want)
+		}
+	}
+	if lines := strings.Count(last.Title, "\n"); lines < 3 {
+		t.Errorf("tooltip is one line, expected the window, the count and the worst:\n%s", last.Title)
 	}
 }

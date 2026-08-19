@@ -41,7 +41,7 @@
   <details class="row {{.RowClass}}">
     <summary>
       <span class="st">{{.Label}}</span>
-      <span class="nm">{{.Name}}{{if .Muted}} <span class="tag">muted</span>{{end}}</span>
+      <span class="nm">{{.Name}}{{if .Badge}} <span class="tag {{.BadgeClass}}">{{.Badge}}</span>{{end}}{{if .Muted}} <span class="tag">muted</span>{{end}}</span>
       {{if .Wide}}<span class="num wide {{.WideClass}}">{{.Wide}}</span>{{else}}<span class="note">{{.Note}}</span>
       <span class="num lat">{{.Latency}}</span>
       <span class="num up24">{{.Uptime}}</span>{{end}}

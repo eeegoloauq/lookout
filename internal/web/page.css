@@ -194,6 +194,9 @@ summary:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
   font-weight: 650;
 }
 
+.tag.soon { color: var(--flap); }
+.tag.bad { color: var(--down); }
+
 .row.up { box-shadow: inset 3px 0 0 var(--up); }
 .row.down { box-shadow: inset 3px 0 0 var(--down); }
 .row.unknown { box-shadow: inset 3px 0 0 var(--unknown); }

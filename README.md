@@ -81,7 +81,9 @@ validation error rather than a silently empty header.
   24-hour bar, plus the log of the last ten outages with what each one said.
   A row shows what its check actually measures: a registration has no
   response time and no daily uptime, so it leads with the date it runs out,
-  coloured once that date is close.
+  coloured once that date is close. Declaring one `type: domain` check for a
+  name is all the wiring there is — every http and dns check that lives under
+  that name shows its expiry too, and warns on the row when it gets close.
   Clocks follow `timezone:` (the API stays UTC). No JavaScript and no
   external asset; it reloads itself once a minute.
 - **A JSON API** on loopback by default. `/api/status` is

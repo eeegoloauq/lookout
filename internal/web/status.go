@@ -2,7 +2,9 @@ package web
 
 import (
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/eeegoloauq/lookout/internal/check"
@@ -87,6 +89,11 @@ type CheckStatus struct {
 	// Incidents is the closed-outage log, newest first: when it broke,
 	// how long it stayed broken and what it said while it was.
 	Incidents []IncidentLogView `json:"incidents,omitempty"`
+	// Registration is the registry expiry of the name this check's URL
+	// lives under, borrowed from the domain check that watches it. A site
+	// that answers 200 every minute still dies on the day its
+	// registration lapses, so the two facts belong in the same place.
+	Registration *RegistrationView `json:"registration,omitempty"`
 
 	// Uptime7d / Uptime30d come from the JSONL history plus today.
 	// Null when there are no samples, never 100% by omission.
@@ -120,6 +127,16 @@ type LatencyView struct {
 type FailureView struct {
 	At     time.Time `json:"at"`
 	Reason string    `json:"reason,omitempty"`
+}
+
+// RegistrationView is a domain check's expiry, as seen from a site that
+// lives under that name. Name is the domain check it came from.
+type RegistrationView struct {
+	Name      string     `json:"name"`
+	DaysLeft  int        `json:"days_left"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	State     string     `json:"state,omitempty"`
+	Delegated *bool      `json:"delegated,omitempty"`
 }
 
 // IncidentLogView is one closed outage.
@@ -183,6 +200,7 @@ func (s *server) snapshot(now time.Time) StatusDocument {
 	for _, c := range cfg.Checks {
 		checks = append(checks, s.checkStatus(c, now))
 	}
+	attachRegistrations(checks)
 	var mutes []MuteView
 	for _, v := range s.mon.Mutes(now) {
 		mutes = append(mutes, MuteView{
@@ -200,6 +218,74 @@ func (s *server) snapshot(now time.Time) StatusDocument {
 		Mutes:       mutes,
 		Checks:      checks,
 	}
+}
+
+// attachRegistrations lends every http check the expiry of the domain check
+// that covers its hostname. Nothing has to be wired up in the config: adding
+// one `type: domain` check for a name is what makes every site under that
+// name show when the name runs out.
+func attachRegistrations(checks []CheckStatus) {
+	domains := map[string]*CheckStatus{}
+	for i := range checks {
+		c := &checks[i]
+		if c.Type != "domain" || c.Host == "" || c.DomainDaysLeft == nil {
+			continue
+		}
+		domains[strings.ToLower(c.Host)] = c
+	}
+	if len(domains) == 0 {
+		return
+	}
+	for i := range checks {
+		c := &checks[i]
+		if c.Type == "domain" {
+			continue
+		}
+		// A DNS check has no URL but does have the name it asks about, and
+		// an MX record on a lapsed domain stops resolving just the same.
+		host := hostOf(c.URL)
+		if host == "" {
+			host = strings.ToLower(c.Host)
+		}
+		if host == "" {
+			continue
+		}
+		d := longestMatch(domains, host)
+		if d == nil {
+			continue
+		}
+		c.Registration = &RegistrationView{
+			Name:      d.Host,
+			DaysLeft:  *d.DomainDaysLeft,
+			ExpiresAt: d.DomainExpires,
+			State:     d.DomainState,
+			Delegated: d.DomainDelegated,
+		}
+	}
+}
+
+// longestMatch finds the domain check covering a hostname: an exact match, or
+// the longest registered name the host sits under, so "shop.example.com"
+// prefers a check on "shop.example.com" over one on "example.com".
+func longestMatch(domains map[string]*CheckStatus, host string) *CheckStatus {
+	var best *CheckStatus
+	for name, d := range domains {
+		if host != name && !strings.HasSuffix(host, "."+name) {
+			continue
+		}
+		if best == nil || len(name) > len(best.Host) {
+			best = d
+		}
+	}
+	return best
+}
+
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 // latency summarises a ring of points. Probes that never got a response
