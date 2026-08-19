@@ -26,6 +26,12 @@ const (
 	DefaultInstabilityCool  = time.Hour
 	DefaultAlert            = true
 	DefaultStateFile        = "state.json"
+	DefaultBatchWindow      = 45 * time.Second
+
+	// Telegram credentials live in the environment, never in the config file
+	// (SPEC §6, §11). Empty values are treated as missing.
+	EnvTelegramToken  = "LOOKOUT_TELEGRAM_TOKEN"
+	EnvTelegramChatID = "LOOKOUT_TELEGRAM_CHAT_ID"
 
 	// DefaultStatus is applied when a check declares no status expectation. A
 	// check that asserts nothing would report "up" for a 500, which is the
@@ -45,7 +51,22 @@ const (
 // Config is a validated configuration.
 type Config struct {
 	StateFile string
+	Alerting  Alerting
 	Checks    []Check
+}
+
+// Alerting is the notification pipeline (SPEC §6, §7). Token and chat id are
+// deliberately not here: they come from the environment so a copied config
+// cannot leak them.
+type Alerting struct {
+	BatchWindow time.Duration
+	Telegram    Telegram
+}
+
+// Telegram is the Bot API transport. Proxy is a SOCKS5 URL; empty means
+// dial api.telegram.org directly.
+type Telegram struct {
+	Proxy string
 }
 
 // Check is one resolved check (SPEC §4).

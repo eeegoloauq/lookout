@@ -212,6 +212,10 @@ func TestValidateRejects(t *testing.T) {
 		{"empty body_contains", minimal + "    expect: {body_contains: \"\"}\n", "would match every response"},
 		{"duplicate check names", minimal + "  - name: Example\n    type: http\n    url: http://b.invalid\n", "duplicate check name"},
 		{"syntax error", "checks:\n  - name: [unclosed\n", "sequence"},
+		{"telegram token in file", minimal + "alerting:\n  telegram:\n    token: secret\n", "environment variable"},
+		{"telegram chat_id in file", minimal + "alerting:\n  telegram:\n    chat_id: \"1\"\n", "environment variable"},
+		{"http proxy for telegram", minimal + "alerting:\n  telegram:\n    proxy: http://proxy.example:8080\n", "socks5"},
+		{"proxy without host", minimal + "alerting:\n  telegram:\n    proxy: socks5://\n", "has no host"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -231,6 +235,29 @@ func TestValidateRejects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAlertingDefaultsAndOverrides(t *testing.T) {
+	cfg := mustLoad(t, minimal)
+	if cfg.Alerting.BatchWindow != DefaultBatchWindow {
+		t.Errorf("batch_window = %s, want %s", cfg.Alerting.BatchWindow, DefaultBatchWindow)
+	}
+	if cfg.Alerting.Telegram.Proxy != "" {
+		t.Errorf("proxy = %q, want empty (direct)", cfg.Alerting.Telegram.Proxy)
+	}
+
+	cfg = mustLoad(t, minimal+`
+alerting:
+  batch_window: 30s
+  telegram:
+    proxy: socks5://proxy.example:1080
+`)
+	if cfg.Alerting.BatchWindow != 30*time.Second {
+		t.Errorf("batch_window = %s, want 30s", cfg.Alerting.BatchWindow)
+	}
+	if cfg.Alerting.Telegram.Proxy != "socks5://proxy.example:1080" {
+		t.Errorf("proxy = %q", cfg.Alerting.Telegram.Proxy)
 	}
 }
 

@@ -23,7 +23,22 @@ import (
 type fileConfig struct {
 	State    *fileState    `yaml:"state"`
 	Defaults *fileDefaults `yaml:"defaults"`
+	Alerting *fileAlerting `yaml:"alerting"`
 	Checks   []fileCheck   `yaml:"checks"`
+}
+
+type fileAlerting struct {
+	BatchWindow *string       `yaml:"batch_window"`
+	Telegram    *fileTelegram `yaml:"telegram"`
+}
+
+// token/chat_id fields exist so a misplaced secret gets a specific error
+// instead of yaml.Strict()'s generic "unknown field".
+type fileTelegram struct {
+	Proxy    *string `yaml:"proxy"`
+	Token    *string `yaml:"token"`
+	BotToken *string `yaml:"bot_token"`
+	ChatID   *string `yaml:"chat_id"`
 }
 
 type fileState struct {
@@ -129,7 +144,10 @@ func structuralError(name string, errs ...error) error {
 }
 
 func resolve(c *collector, raw *fileConfig) *Config {
-	cfg := &Config{StateFile: DefaultStateFile}
+	cfg := &Config{
+		StateFile: DefaultStateFile,
+		Alerting:  Alerting{BatchWindow: DefaultBatchWindow},
+	}
 	if raw.State != nil && raw.State.File != nil {
 		if v, ok := expand(c, "state.file", *raw.State.File); ok {
 			if strings.TrimSpace(v) == "" {
@@ -138,6 +156,10 @@ func resolve(c *collector, raw *fileConfig) *Config {
 				cfg.StateFile = v
 			}
 		}
+	}
+
+	if raw.Alerting != nil {
+		resolveAlerting(c, raw.Alerting, &cfg.Alerting)
 	}
 
 	def := defaultCheck()
@@ -164,6 +186,60 @@ func resolve(c *collector, raw *fileConfig) *Config {
 		cfg.Checks = append(cfg.Checks, chk)
 	}
 	return cfg
+}
+
+func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {
+	if in.BatchWindow != nil {
+		if v, ok := duration(c, "alerting.batch_window", *in.BatchWindow); ok {
+			into.BatchWindow = v
+		}
+	}
+	if in.Telegram == nil {
+		return
+	}
+	tg := in.Telegram
+	if tg.Token != nil {
+		c.addf("alerting.telegram.token", "telegram bot token must come from the %s environment variable, not the config file", EnvTelegramToken)
+	}
+	if tg.BotToken != nil {
+		c.addf("alerting.telegram.bot_token", "telegram bot token must come from the %s environment variable, not the config file", EnvTelegramToken)
+	}
+	if tg.ChatID != nil {
+		c.addf("alerting.telegram.chat_id", "telegram chat id must come from the %s environment variable, not the config file", EnvTelegramChatID)
+	}
+	if tg.Proxy != nil {
+		into.Telegram.Proxy = resolveProxy(c, "alerting.telegram.proxy", *tg.Proxy)
+	}
+}
+
+func resolveProxy(c *collector, path, raw string) string {
+	expanded, ok := expand(c, path, raw)
+	if !ok {
+		return ""
+	}
+	expanded = strings.TrimSpace(expanded)
+	if expanded == "" {
+		return ""
+	}
+	u, err := url.Parse(expanded)
+	if err != nil {
+		c.addf(path, "proxy URL is not valid: %v", err)
+		return ""
+	}
+	switch u.Scheme {
+	case "socks5", "socks5h":
+	case "":
+		c.addf(path, "proxy URL %q has no scheme, expected %q", expanded, "socks5://")
+		return ""
+	default:
+		c.addf(path, "proxy scheme %q is not supported, expected %q (Telegram is reached through SOCKS5)", u.Scheme, "socks5")
+		return ""
+	}
+	if u.Host == "" {
+		c.addf(path, "proxy URL %q has no host", expanded)
+		return ""
+	}
+	return expanded
 }
 
 func defaultCheck() Check {
