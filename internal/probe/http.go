@@ -3,12 +3,15 @@ package probe
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eeegoloauq/lookout/internal/check"
@@ -76,8 +79,14 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 		req.Header.Set(name, value)
 	}
 
+	client, slot := p.clientFor(req)
 	start := time.Now()
-	resp, err := p.client.Do(req)
+	resp, err := client.Do(req)
+	if slot != nil {
+		if cert := slot.get(); cert != nil {
+			res.CertNotAfter = cert.NotAfter.UTC()
+		}
+	}
 	if err != nil {
 		res.Duration = time.Since(start)
 		res.Outcome = check.OutcomeDown
@@ -85,6 +94,9 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 		return res
 	}
 	defer resp.Body.Close()
+	if res.CertNotAfter.IsZero() && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		res.CertNotAfter = resp.TLS.PeerCertificates[0].NotAfter.UTC()
+	}
 
 	limited := io.LimitReader(resp.Body, maxBody+1)
 	body, readErr := io.ReadAll(limited)
@@ -112,6 +124,84 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 	res.Outcome = outcome
 	res.Failures = failures
 	return res
+}
+
+// clientFor returns a client that captures the leaf certificate of an
+// https handshake *before* verification runs. An expired or mismatched
+// cert still fails the probe, but the NotAfter is available for the
+// expiry alert that would otherwise be silent (research O16).
+func (p *HTTP) clientFor(req *http.Request) (*http.Client, *certSlot) {
+	if req.URL == nil || req.URL.Scheme != "https" {
+		return p.client, nil
+	}
+	base, _ := p.client.Transport.(*http.Transport)
+	if base == nil {
+		base = Transport()
+	}
+	transport := base.Clone()
+	cfg := &tls.Config{}
+	if transport.TLSClientConfig != nil {
+		cfg = transport.TLSClientConfig.Clone()
+	}
+	slot := &certSlot{}
+	serverName := cfg.ServerName
+	if serverName == "" {
+		serverName = req.URL.Hostname()
+	}
+	skip := cfg.InsecureSkipVerify
+	roots := cfg.RootCAs
+	cfg.InsecureSkipVerify = true
+	cfg.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if len(rawCerts) == 0 {
+			return errors.New("tls: peer didn't provide a certificate")
+		}
+		cert, err := x509.ParseCertificate(rawCerts[0])
+		if err != nil {
+			return err
+		}
+		slot.set(cert)
+		if skip {
+			return nil
+		}
+		intermediates := x509.NewCertPool()
+		for _, der := range rawCerts[1:] {
+			c, err := x509.ParseCertificate(der)
+			if err != nil {
+				continue
+			}
+			intermediates.AddCert(c)
+		}
+		_, err = cert.Verify(x509.VerifyOptions{
+			DNSName:       serverName,
+			Intermediates: intermediates,
+			Roots:         roots,
+		})
+		return err
+	}
+	transport.TLSClientConfig = cfg
+	return &http.Client{
+		Transport:     transport,
+		CheckRedirect: p.client.CheckRedirect,
+		Jar:           p.client.Jar,
+		Timeout:       p.client.Timeout,
+	}, slot
+}
+
+type certSlot struct {
+	mu   sync.Mutex
+	leaf *x509.Certificate
+}
+
+func (s *certSlot) set(c *x509.Certificate) {
+	s.mu.Lock()
+	s.leaf = c
+	s.mu.Unlock()
+}
+
+func (s *certSlot) get() *x509.Certificate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leaf
 }
 
 // transportError turns a client error into a short, secret-free sentence.
