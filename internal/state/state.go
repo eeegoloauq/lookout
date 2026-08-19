@@ -46,6 +46,31 @@ type CheckState struct {
 	// restart, or a crash loop turns into a notification loop.
 	Unstable         bool      `json:"unstable,omitempty"`
 	UnstableNoticeAt time.Time `json:"unstable_notice_at,omitzero"`
+
+	// ZoneSnapshot is the last decoded DNS answer set. The first
+	// successful decode is a baseline, not a drift (SPEC §5.5).
+	ZoneSnapshot   string    `json:"zone_snapshot,omitempty"`
+	ZoneSnapshotAt time.Time `json:"zone_snapshot_at,omitzero"`
+
+	// Certificate expiry, taken from the HTTPS handshake. TiersFired is
+	// a bitmask of numbered thresholds already sent; DailyOn is the UTC
+	// date of the last daily notice after the last numbered tier.
+	CertNotAfter   time.Time `json:"cert_not_after,omitzero"`
+	CertTiersFired uint32    `json:"cert_tiers_fired,omitempty"`
+	CertDailyOn    string    `json:"cert_daily_on,omitempty"`
+
+	// Domain expiry from RDAP or WHOIS. UnknownSince is when the
+	// registry stopped answering; a stale-source alert fires only after
+	// DomainStaleAfter (SPEC §5.4).
+	DomainExpiresAt    time.Time `json:"domain_expires_at,omitzero"`
+	DomainFreeDate     time.Time `json:"domain_free_date,omitzero"`
+	DomainState        string    `json:"domain_state,omitempty"`
+	DomainSource       string    `json:"domain_source,omitempty"`
+	DomainUpdatedAt    time.Time `json:"domain_updated_at,omitzero"`
+	DomainUnknownSince time.Time `json:"domain_unknown_since,omitzero"`
+	DomainTiersFired   uint32    `json:"domain_tiers_fired,omitempty"`
+	DomainDailyOn      string    `json:"domain_daily_on,omitempty"`
+	DomainStaleNotice  bool      `json:"domain_stale_notice,omitempty"`
 }
 
 // Snapshot is the whole durable state, as written to disk.
@@ -58,6 +83,20 @@ type Snapshot struct {
 	// surviving a restart with "already down" and no queued alert is the
 	// failure SPEC §1.1 exists to prevent.
 	Outbox Outbox `json:"outbox"`
+
+	// Registry is the cached IANA RDAP bootstrap and WHOIS referrals.
+	// It is process-wide, not per-check, and is safe to lose: the next
+	// domain probe refetches it.
+	Registry RegistryCache `json:"registry,omitzero"`
+}
+
+// RegistryCache is the weekly RDAP bootstrap plus any WHOIS servers we
+// have already asked IANA for. A hard-coded TLD table would go stale
+// silently; this is the live equivalent (SPEC §5.4).
+type RegistryCache struct {
+	RDAPFetchedAt time.Time         `json:"rdap_fetched_at,omitzero"`
+	RDAP          map[string]string `json:"rdap,omitempty"`  // tld → base URL
+	WHOIS         map[string]string `json:"whois,omitempty"` // tld → host
 }
 
 // Store reads and writes the durable state file.

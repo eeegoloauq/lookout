@@ -27,6 +27,14 @@ const (
 	// otherwise drop events: a digest of what overflow discarded, so silence
 	// cannot be the overflow policy.
 	EventSummary EventKind = "summary"
+	// EventDrift is a DNS zone snapshot that no longer matches the
+	// previous one. The first snapshot is a baseline and never fires this.
+	EventDrift EventKind = "drift"
+	// EventExpiry is a certificate or domain crossing an expiry tier.
+	EventExpiry EventKind = "expiry"
+	// EventStale is a domain registry that has not answered for
+	// DomainStaleAfter. It is not a domain outage.
+	EventStale EventKind = "stale"
 )
 
 // Event is a state change worth telling someone about. It is written to the
@@ -52,6 +60,36 @@ type Event struct {
 	// Summary is set on EventSummary: what the outbox folded together rather
 	// than drop when the queue filled up.
 	Summary *Summary `json:"summary,omitempty"`
+
+	// Drift is set on EventDrift.
+	Drift *Drift `json:"drift,omitempty"`
+	// Expiry is set on EventExpiry.
+	Expiry *Expiry `json:"expiry,omitempty"`
+	// StaleFor is set on EventStale: how long the registry has been silent.
+	StaleFor time.Duration `json:"stale_for,omitempty"`
+}
+
+// Drift is a zone snapshot that changed.
+type Drift struct {
+	Before string `json:"before"`
+	After  string `json:"after"`
+}
+
+// ExpiryKind names what is running out.
+const (
+	ExpiryCertificate = "certificate"
+	ExpiryDomain      = "domain"
+)
+
+// Expiry is a crossed notification tier.
+type Expiry struct {
+	Kind      string    `json:"kind"`
+	DaysLeft  int       `json:"days_left"`
+	Threshold int       `json:"threshold,omitempty"` // 0 = daily
+	NotAfter  time.Time `json:"not_after"`
+	State     string    `json:"state,omitempty"`
+	FreeDate  time.Time `json:"free_date,omitzero"`
+	Source    string    `json:"source,omitempty"`
 }
 
 // Machine turns a stream of results into confirmed states and events. It is
@@ -173,60 +211,169 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 	}
 	before := e.CheckState
 
-	failed := r.Outcome.Failed()
-	if failed {
-		e.ConsecutiveSuccesses = 0
-		e.ConsecutiveFailures++
-		if e.ConsecutiveFailures == 1 {
-			e.FirstFailureAt = r.At
-		}
-	} else {
-		e.ConsecutiveFailures = 0
-		e.ConsecutiveSuccesses++
-	}
-	e.observe(failed, c.Instability.Window)
-
 	event := Event{Check: c.Name, Group: c.Group, At: r.At, Alert: c.Alert, Result: r}
 	var events []Event
 
-	switch {
-	case failed && e.Status != StatusDown && e.ConsecutiveFailures >= c.FailureThreshold:
-		e.Status = StatusDown
-		e.IncidentStart = e.FirstFailureAt
-		e.LastChange = r.At
-		// A confirmed incident supersedes any instability notice: the operator
-		// is being told about this check already.
-		e.Unstable = false
-		event.Kind = EventDown
-		events = append(events, event)
-
-	case !failed && e.Status != StatusUp && e.ConsecutiveSuccesses >= c.SuccessThreshold:
-		wasDown := e.Status == StatusDown
-		e.Status = StatusUp
-		e.LastChange = r.At
-		if wasDown {
-			event.Kind = EventUp
-			event.Downtime = r.At.Sub(e.IncidentStart)
-			events = append(events, event)
-			// The incident has been reported; the failures that made it up must
-			// not be reported a second time as instability.
-			e.recent, e.seen = 0, 0
-			e.Unstable = false
+	if r.Outcome == check.OutcomeUnknown {
+		events = append(events, e.observeUnknown(c, event)...)
+	} else {
+		failed := r.Outcome.Failed()
+		if failed {
+			e.ConsecutiveSuccesses = 0
+			e.ConsecutiveFailures++
+			if e.ConsecutiveFailures == 1 {
+				e.FirstFailureAt = r.At
+			}
+		} else {
+			e.ConsecutiveFailures = 0
+			e.ConsecutiveSuccesses++
 		}
-		// StatusUnknown -> StatusUp emits nothing. Coming back from a lost
-		// state file is not a recovery: nobody was ever told about an outage.
-		e.IncidentStart = time.Time{}
+		e.observe(failed, c.Instability.Window)
+
+		switch {
+		case failed && e.Status != StatusDown && e.ConsecutiveFailures >= c.FailureThreshold:
+			e.Status = StatusDown
+			e.IncidentStart = e.FirstFailureAt
+			e.LastChange = r.At
+			// A confirmed incident supersedes any instability notice: the operator
+			// is being told about this check already.
+			e.Unstable = false
+			event.Kind = EventDown
+			events = append(events, event)
+
+		case !failed && e.Status != StatusUp && e.ConsecutiveSuccesses >= c.SuccessThreshold:
+			wasDown := e.Status == StatusDown
+			e.Status = StatusUp
+			e.LastChange = r.At
+			if wasDown {
+				event.Kind = EventUp
+				event.Downtime = r.At.Sub(e.IncidentStart)
+				events = append(events, event)
+				// The incident has been reported; the failures that made it up must
+				// not be reported a second time as instability.
+				e.recent, e.seen = 0, 0
+				e.Unstable = false
+			}
+			// StatusUnknown -> StatusUp emits nothing. Coming back from a lost
+			// state file is not a recovery: nobody was ever told about an outage.
+			e.IncidentStart = time.Time{}
+		}
+
+		if ev, ok := e.instability(c, event); ok {
+			events = append(events, ev)
+		}
 	}
 
-	if ev, ok := e.instability(c, event); ok {
-		events = append(events, ev)
-	}
+	events = append(events, e.observeDrift(c, event)...)
+	events = append(events, e.observeCert(c, event)...)
+	events = append(events, e.observeDomain(c, event)...)
 
 	if e.CheckState != before {
 		m.dirty = true
 		m.updated = r.At
 	}
 	return events
+}
+
+func (e *entry) observeUnknown(c config.Check, base Event) []Event {
+	if c.Type != config.TypeDomain {
+		return nil
+	}
+	if e.DomainUnknownSince.IsZero() {
+		e.DomainUnknownSince = base.At
+	}
+	if e.DomainStaleNotice || base.At.Sub(e.DomainUnknownSince) < DomainStaleAfter {
+		return nil
+	}
+	e.DomainStaleNotice = true
+	base.Kind = EventStale
+	base.StaleFor = base.At.Sub(e.DomainUnknownSince)
+	return []Event{base}
+}
+
+func (e *entry) observeDrift(c config.Check, base Event) []Event {
+	if c.Type != config.TypeDNS || base.Result.ZoneSnapshot == "" {
+		return nil
+	}
+	next := base.Result.ZoneSnapshot
+	if e.ZoneSnapshot == "" {
+		e.ZoneSnapshot = next
+		e.ZoneSnapshotAt = base.At
+		return nil
+	}
+	if e.ZoneSnapshot == next {
+		return nil
+	}
+	ev := base
+	ev.Kind = EventDrift
+	ev.Drift = &Drift{Before: e.ZoneSnapshot, After: next}
+	e.ZoneSnapshot = next
+	e.ZoneSnapshotAt = base.At
+	return []Event{ev}
+}
+
+func (e *entry) observeCert(_ config.Check, base Event) []Event {
+	next := base.Result.CertNotAfter
+	if next.IsZero() {
+		return nil
+	}
+	if renewed(e.CertNotAfter, next) {
+		e.CertTiersFired = 0
+		e.CertDailyOn = ""
+	}
+	e.CertNotAfter = next
+	days := DaysLeft(next, base.At)
+	th, fired, daily, fire := nextTier(days, CertTiers, e.CertTiersFired, e.CertDailyOn, base.At)
+	e.CertTiersFired = fired
+	e.CertDailyOn = daily
+	if !fire {
+		return nil
+	}
+	ev := base
+	ev.Kind = EventExpiry
+	ev.Expiry = &Expiry{Kind: ExpiryCertificate, DaysLeft: days, Threshold: th, NotAfter: next}
+	return []Event{ev}
+}
+
+func (e *entry) observeDomain(c config.Check, base Event) []Event {
+	if c.Type != config.TypeDomain {
+		return nil
+	}
+	next := base.Result.DomainExpiresAt
+	if next.IsZero() {
+		return nil
+	}
+	if renewed(e.DomainExpiresAt, next) {
+		e.DomainTiersFired = 0
+		e.DomainDailyOn = ""
+	}
+	e.DomainExpiresAt = next
+	e.DomainFreeDate = base.Result.DomainFreeDate
+	e.DomainState = base.Result.DomainState
+	e.DomainSource = base.Result.DomainSource
+	e.DomainUpdatedAt = base.At
+	e.DomainUnknownSince = time.Time{}
+	e.DomainStaleNotice = false
+
+	days := DaysLeft(next, base.At)
+	th, fired, daily, fire := nextTier(days, DomainTiers, e.DomainTiersFired, e.DomainDailyOn, base.At)
+	e.DomainTiersFired = fired
+	e.DomainDailyOn = daily
+	if !fire {
+		return nil
+	}
+	ev := base
+	ev.Kind = EventExpiry
+	ev.Expiry = &Expiry{
+		Kind:      ExpiryDomain,
+		DaysLeft:  days,
+		Threshold: th,
+		NotAfter:  next,
+		State:     base.Result.DomainState,
+		FreeDate:  base.Result.DomainFreeDate,
+		Source:    base.Result.DomainSource,
+	}
+	return []Event{ev}
 }
 
 // observe pushes one result into the sliding window.
