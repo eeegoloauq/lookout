@@ -1,0 +1,242 @@
+package config
+
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+const minimal = `
+checks:
+  - name: Example
+    type: http
+    url: http://example.invalid:8080
+`
+
+func mustLoad(t *testing.T, src string) *Config {
+	t.Helper()
+	cfg, err := Load("config.yaml", []byte(src))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return cfg
+}
+
+// A check that says nothing about alerting must alert. This is the inverted
+// default of SPEC §1.1 and the reason lookout exists, so it is tested first.
+func TestAlertingDefaultsToOn(t *testing.T) {
+	cfg := mustLoad(t, minimal)
+	if !cfg.Checks[0].Alert {
+		t.Fatal("a check without an explicit alert: must alert, got alert=false")
+	}
+}
+
+func TestAlertingCanBeDisabledExplicitly(t *testing.T) {
+	cfg := mustLoad(t, minimal+"    alert: false\n")
+	if cfg.Checks[0].Alert {
+		t.Fatal("alert: false must disable alerting")
+	}
+}
+
+func TestDefaultsBlockAppliesAndCheckOverrides(t *testing.T) {
+	cfg := mustLoad(t, `
+defaults:
+  interval: 30s
+  timeout: 3s
+  failure_threshold: 4
+  instability: {failures: 2, window: 10, cooldown: 15m}
+  alert: false
+checks:
+  - name: A
+    type: http
+    url: http://a.invalid
+  - name: B
+    type: http
+    url: http://b.invalid
+    interval: 10s
+    alert: true
+`)
+	a, b := cfg.Checks[0], cfg.Checks[1]
+	if a.Interval != 30*time.Second || a.Timeout != 3*time.Second {
+		t.Errorf("defaults not applied: %+v", a)
+	}
+	if a.FailureThreshold != 4 || a.SuccessThreshold != DefaultSuccessThreshold {
+		t.Errorf("threshold defaults wrong: %+v", a)
+	}
+	if a.Instability != (Instability{Failures: 2, Window: 10, Cooldown: 15 * time.Minute}) {
+		t.Errorf("instability defaults wrong: %+v", a.Instability)
+	}
+	if a.Alert {
+		t.Error("defaults.alert: false must apply to checks that say nothing")
+	}
+	if b.Interval != 10*time.Second || !b.Alert {
+		t.Errorf("check overrides not applied: %+v", b)
+	}
+	if b.Method != DefaultMethod {
+		t.Errorf("method = %q, want %q", b.Method, DefaultMethod)
+	}
+}
+
+func TestStatusDefaultsToSuccessRange(t *testing.T) {
+	cfg := mustLoad(t, minimal)
+	m := cfg.Checks[0].Expect.Status
+	if !m.Match(200) || !m.Match(299) || m.Match(500) || m.Match(199) {
+		t.Fatalf("default status matcher %q behaves wrong", m)
+	}
+}
+
+func TestStatusMatcherForms(t *testing.T) {
+	tests := []struct {
+		yaml  string
+		match map[int]bool
+	}{
+		{"status: 204", map[int]bool{204: true, 200: false}},
+		{`status: "200-299"`, map[int]bool{200: true, 250: true, 300: false}},
+		{`status: "<500"`, map[int]bool{499: true, 500: false}},
+		{`status: ">=200"`, map[int]bool{200: true, 199: false}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.yaml, func(t *testing.T) {
+			cfg := mustLoad(t, minimal+"    expect:\n      "+tc.yaml+"\n")
+			m := cfg.Checks[0].Expect.Status
+			for code, want := range tc.match {
+				if got := m.Match(code); got != want {
+					t.Errorf("%q.Match(%d) = %v, want %v", m, code, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestEnvExpansion(t *testing.T) {
+	t.Setenv("LOOKOUT_TEST_TOKEN", "s3cret")
+	cfg := mustLoad(t, minimal+"    headers:\n      Authorization: \"Basic ${LOOKOUT_TEST_TOKEN}\"\n")
+	if got := cfg.Checks[0].Headers["Authorization"]; got != "Basic s3cret" {
+		t.Fatalf("Authorization = %q, want %q", got, "Basic s3cret")
+	}
+}
+
+func TestBodyExpectations(t *testing.T) {
+	cfg := mustLoad(t, minimal+`    expect:
+      body:
+        ".result.source.online": true
+        ".items[0].name": "primary"
+        ".count": 3
+`)
+	body := cfg.Checks[0].Expect.Body
+	if len(body) != 3 {
+		t.Fatalf("got %d body conditions, want 3", len(body))
+	}
+	// Order follows the document, so error messages are reproducible.
+	if body[0].Path.String() != ".result.source.online" || body[0].Want != true {
+		t.Errorf("body[0] = %+v", body[0])
+	}
+	if body[2].Want != float64(3) {
+		t.Errorf("numbers must normalise to float64, got %T", body[2].Want)
+	}
+}
+
+// Validation must report every problem in one pass, each with the line it is on.
+func TestValidateReportsAllErrorsWithPositions(t *testing.T) {
+	src := `
+defaults:
+  interval: 60s
+  timeout: 5s
+checks:
+  - name: ""
+    type: http
+    url: not-a-url
+  - name: Bad
+    type: ftp
+    url: http://example.invalid
+    timeout: 90s
+    expect:
+      status: "999"
+      response_time: "5s"
+      body:
+        "result.online": true
+`
+	_, err := Load("config.yaml", []byte(src))
+	var errs Errors
+	if !errors.As(err, &errs) {
+		t.Fatalf("want Errors, got %T: %v", err, err)
+	}
+	want := map[int]string{
+		6:  "name is required",
+		8:  "no scheme",
+		10: "unknown check type",
+		12: "must be shorter than interval",
+		14: "outside the HTTP range",
+		15: "must start with a comparison",
+		17: `must start with "." or "["`,
+	}
+	got := map[int]string{}
+	for _, e := range errs {
+		got[e.Line] = e.Msg
+	}
+	for line, substr := range want {
+		msg, ok := got[line]
+		if !ok {
+			t.Errorf("no error reported on line %d (want %q); got: %v", line, substr, errs)
+			continue
+		}
+		if !strings.Contains(msg, substr) {
+			t.Errorf("line %d: message %q does not contain %q", line, msg, substr)
+		}
+	}
+	if len(errs) != len(want) {
+		t.Errorf("got %d errors, want %d:\n%v", len(errs), len(want), errs)
+	}
+}
+
+func TestValidateRejects(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"no checks", "checks: []\n", "no checks defined"},
+		{"missing type", "checks:\n  - name: A\n    url: http://a.invalid\n", "type is required"},
+		{"unimplemented type", "checks:\n  - name: A\n    type: dns\n", "not implemented yet"},
+		{"missing url", "checks:\n  - name: A\n    type: http\n", "url is required"},
+		{"unknown field", minimal + "    intervals: 5s\n", "unknown field"},
+		{"duplicate key", minimal + "    url: http://b.invalid\n", "already defined"},
+		{"bad duration", minimal + "    interval: 5 seconds\n", "is not a duration"},
+		{"unset env var", minimal + "    headers: {X-Token: \"${LOOKOUT_UNSET_VAR_FOR_TEST}\"}\n", "is not set"},
+		{"bad method", minimal + "    method: FETCH\n", "unknown HTTP method"},
+		{"window too wide", minimal + "    instability: {window: 100}\n", "between 1 and 64"},
+		{"failures above window", minimal + "    instability: {failures: 30, window: 20}\n", "cannot exceed window"},
+		{"threshold below one", minimal + "    failure_threshold: 0\n", "at least 1"},
+		{"response_time above timeout", minimal + "    expect: {response_time: \"<10s\"}\n", "can never fail"},
+		{"empty body_contains", minimal + "    expect: {body_contains: \"\"}\n", "would match every response"},
+		{"duplicate check names", minimal + "  - name: Example\n    type: http\n    url: http://b.invalid\n", "duplicate check name"},
+		{"syntax error", "checks:\n  - name: [unclosed\n", "sequence"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load("config.yaml", []byte(tc.src))
+			if err == nil {
+				t.Fatalf("want an error containing %q, got none", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not contain %q", err, tc.want)
+			}
+			var errs Errors
+			if errors.As(err, &errs) {
+				for _, e := range errs {
+					if e.Line == 0 {
+						t.Errorf("error without a line number: %v", e)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExampleConfigLoads(t *testing.T) {
+	t.Setenv("LOOKOUT_BASIC_AUTH", "dXNlcjpwYXNz")
+	if _, err := LoadFile("../../config.example.yaml"); err != nil {
+		t.Fatalf("config.example.yaml must be valid: %v", err)
+	}
+}

@@ -1,0 +1,70 @@
+# lookout example configuration.
+#
+# Copy to config.yaml and edit. Real hosts, addresses and secrets never belong
+# in this repository: hostnames below are placeholders under the reserved
+# .example domain, and secrets are read from the environment with ${VAR}.
+#
+#   lookout validate config.yaml    # checks everything before the process starts
+#   lookout run config.yaml
+#
+# This release probes HTTP checks; dns and domain checks arrive in a later one.
+
+state:
+  # Durable state: current up/down, streak counters, incident starts.
+  # Losing this file is safe — it costs history, not correctness.
+  file: /var/lib/lookout/state.json
+
+defaults:
+  interval: 60s
+  timeout: 5s            # must be shorter than the interval
+  failure_threshold: 3   # consecutive failures before a check is DOWN
+  success_threshold: 2   # consecutive successes before it is UP again
+  instability:
+    # "N of the last M": catches a check that alternates up/down, which
+    # consecutive counters never see, no matter how bad availability is.
+    failures: 5
+    window: 20
+    cooldown: 1h
+  # alert: true is the default and does not need to be written. Silence must
+  # never be a configuration accident.
+
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: http://photos.service.example:8080/api/server/ping
+    expect:
+      status: 200
+      body:
+        ".res": "pong"
+
+  - name: Router
+    group: Core
+    type: http
+    url: http://router.lan.example/
+    interval: 30s
+    timeout: 3s
+    expect:
+      status: "200-399"
+      response_time: "<1s"
+
+  - name: Private API
+    group: Services
+    type: http
+    url: https://api.service.example/health
+    method: GET
+    headers:
+      Authorization: "Basic ${LOOKOUT_BASIC_AUTH}"
+    expect:
+      status: "<500"
+      body:
+        ".result.source.online": true
+        ".components[0].degraded": false
+      body_contains: "ok"
+      response_time: "<2s"
+
+  - name: Noisy Test Box
+    group: Lab
+    type: http
+    url: http://lab.service.example:9000/
+    alert: false          # monitored and graphed, but never notifies
