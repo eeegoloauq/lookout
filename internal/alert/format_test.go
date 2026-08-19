@@ -399,3 +399,19 @@ func TestHTMLBodiesAreLeftOutOfAlerts(t *testing.T) {
 		t.Fatalf("the status code must survive:\n%s", got)
 	}
 }
+
+// Go's http client prefixes every transport error with the request it was
+// making. The check name already says that; the prefix only pushes the real
+// failure off the readable part of the line.
+func TestTransportErrorsDropTheRequestPrefix(t *testing.T) {
+	got := Format([]state.Event{{
+		Kind: state.EventDown, Check: "Immich",
+		Result: check.Result{Err: "Get http://198.51.100.24:2283/: dial tcp 198.51.100.24:2283: connect: connection refused"},
+	}})
+	if strings.Contains(got, "Get http") {
+		t.Errorf("request prefix survived: %q", got)
+	}
+	if !strings.Contains(got, "dial tcp 198.51.100.24:2283: connect: connection refused") {
+		t.Errorf("the failure itself must survive: %q", got)
+	}
+}

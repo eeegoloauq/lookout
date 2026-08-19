@@ -2,6 +2,7 @@ package alert
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -364,7 +365,7 @@ func expiryShort(ev state.Event) string {
 // attempt took. Everything the old format spread over three labelled lines
 // fits here, because the labels never carried information.
 func cause(r check.Result) string {
-	reason := oneLine(check.RedactSecrets(r.Reason()))
+	reason := trimProbeOp(oneLine(check.RedactSecrets(r.Reason())))
 	dur := ""
 	if d := r.Duration.Round(time.Millisecond); d > 0 {
 		dur = " (" + fmtDuration(d) + ")"
@@ -380,6 +381,15 @@ func cause(r check.Result) string {
 		return "no response" + dur
 	}
 	return ""
+}
+
+// probeOp matches the "Get http://host/path: " prefix Go's http client puts
+// in front of every transport error. The check name already says what was
+// probed, and the prefix pushes the actual failure off the visible line.
+var probeOp = regexp.MustCompile(`^(?:Get|Head|Post|Put|Patch|Delete) [^ ]+: `)
+
+func trimProbeOp(s string) string {
+	return probeOp.ReplaceAllString(s, "")
 }
 
 func body(r check.Result) string {
