@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<header>
+  <h1>lookout</h1>
+  <p class="tally">{{.Tally}}</p>
+  <p class="when">{{.When}}</p>
+</header>
+{{if .Degraded}}
+<p class="banner" role="status">Lookout cannot notify: {{.Degraded}}</p>
+{{end}}
+<div class="wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Check</th>
+      <th>Group</th>
+      <th>Status</th>
+      <th>Checked</th>
+      <th>Time</th>
+      <th>24h</th>
+      <th>Incident</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Checks}}
+    <tr class="{{.RowClass}}">
+      <td class="name">{{.Name}}</td>
+      <td class="group">{{.Group}}</td>
+      <td class="st"><span>{{.Label}}</span></td>
+      <td class="num">{{.Checked}}</td>
+      <td class="num">{{.Latency}}</td>
+      <td class="num">{{.Uptime}}</td>
+      <td class="num">{{.Incident}}</td>
+    </tr>
+    {{else}}
+    <tr><td colspan="7">No checks configured.</td></tr>
+    {{end}}
+  </tbody>
+</table>
+</div>
+</body>
+</html>

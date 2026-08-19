@@ -1,0 +1,137 @@
+/* Status board, not a dashboard: one dense table, system fonts only.
+   Colour is the scan path — the left edge of each row is the state.
+   Dark and light are first-class; there is no "default plus invert". */
+
+:root {
+  --paper: #e8eef4;
+  --ink: #1b2430;
+  --mute: #5a6878;
+  --rule: #c3ced9;
+  --up: #0f6b45;
+  --down: #b42318;
+  --unknown: #667384;
+  --flap: #8a5800;
+  --up-wash: #d5efe3;
+  --down-wash: #f8d7d4;
+  --flap-wash: #f6e6c5;
+  --unknown-wash: #dde3ea;
+  --banner-bg: #b42318;
+  --banner-ink: #fff8f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #10151b;
+    --ink: #dce4ed;
+    --mute: #8b98a6;
+    --rule: #2a343f;
+    --up: #3dcc86;
+    --down: #ff6d63;
+    --unknown: #8b98a6;
+    --flap: #e0a12b;
+    --up-wash: #163126;
+    --down-wash: #3a1a18;
+    --flap-wash: #33260e;
+    --unknown-wash: #1a2129;
+    --banner-bg: #8f1d16;
+    --banner-ink: #ffe8e5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html {
+  font-size: 15px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  margin: 0 auto;
+  max-width: 72rem;
+  padding: 1.1rem 1.25rem 2rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.25rem;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+.tally { margin: 0; color: var(--mute); }
+.when { margin: 0 0 0 auto; color: var(--mute); }
+
+.banner {
+  margin: 0 0 0.85rem;
+  padding: 0.45rem 0.65rem;
+  background: var(--banner-bg);
+  color: var(--banner-ink);
+}
+
+.wrap { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.28rem 0.55rem;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+th {
+  font-weight: 550;
+  color: var(--mute);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--rule);
+}
+
+td { border-bottom: 1px solid var(--rule); }
+
+.name { font-weight: 600; }
+.group { color: var(--mute); }
+.num { text-align: right; font-feature-settings: "tnum"; }
+
+.st span {
+  display: inline-block;
+  min-width: 5.6rem;
+  padding: 0.05rem 0.35rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+tr.up { box-shadow: inset 3px 0 0 var(--up); }
+tr.down { box-shadow: inset 3px 0 0 var(--down); }
+tr.unknown { box-shadow: inset 3px 0 0 var(--unknown); }
+tr.unstable { box-shadow: inset 3px 0 0 var(--flap); }
+
+tr.up .st span { background: var(--up-wash); color: var(--up); }
+tr.down .st span { background: var(--down-wash); color: var(--down); }
+tr.unknown .st span { background: var(--unknown-wash); color: var(--unknown); }
+tr.unstable .st span { background: var(--flap-wash); color: var(--flap); }
+
+@media (max-width: 40rem) {
+  body { padding: 0.8rem 0.6rem 1.5rem; }
+  th:nth-child(2), td.group { display: none; }
+}
