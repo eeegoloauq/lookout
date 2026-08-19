@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -131,6 +132,18 @@ func validate(args []string, out io.Writer) error {
 			fmt.Fprintf(out, ", socks5 proxy configured")
 		}
 		fmt.Fprintln(out)
+		// Reminder cadence is the setting most likely to surprise: it is
+		// the only one that sends a message nobody's state change caused.
+		if len(cfg.Alerting.Reminders) == 0 {
+			fmt.Fprintln(out, "reminders: off — an open outage is reported once and never repeated")
+		} else {
+			parts := make([]string, 0, len(cfg.Alerting.Reminders))
+			for _, d := range cfg.Alerting.Reminders {
+				parts = append(parts, d.String())
+			}
+			fmt.Fprintf(out, "reminders: %s, then every %s while an outage stays open\n",
+				strings.Join(parts, ", "), cfg.Alerting.Reminders[len(cfg.Alerting.Reminders)-1])
+		}
 		if os.Getenv(config.EnvTelegramToken) == "" || os.Getenv(config.EnvTelegramChatID) == "" {
 			fmt.Fprintf(out, "note: %s and %s must be set for lookout run to start\n",
 				config.EnvTelegramToken, config.EnvTelegramChatID)
