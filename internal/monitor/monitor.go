@@ -197,6 +197,12 @@ func (m *Monitor) logEvent(ev state.Event) {
 	switch ev.Kind {
 	case state.EventDown:
 		attrs = append(attrs, "status", ev.Result.StatusCode, "reason", ev.Result.Reason())
+		// A response we can no longer read is a changed API, not an outage.
+		// It reaches the threshold the same way but must not read the same.
+		if ev.Result.Outcome == check.OutcomeMalformed {
+			m.log.Warn("check response no longer matches", attrs...)
+			return
+		}
 		m.log.Warn("check is down", attrs...)
 	case state.EventUp:
 		attrs = append(attrs, "downtime", ev.Downtime)

@@ -6,3 +6,5 @@ config.yaml
 *.db
 *.db-wal
 *.db-shm
+/state.json
+/live-state.json

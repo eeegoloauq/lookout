@@ -38,20 +38,20 @@ type CheckState struct {
 	ConsecutiveSuccesses int    `json:"consecutive_successes,omitempty"`
 	// FirstFailureAt is when the current run of failures began; it becomes
 	// IncidentStart once the failure threshold confirms the outage.
-	FirstFailureAt time.Time `json:"first_failure_at,omitempty"`
-	IncidentStart  time.Time `json:"incident_start,omitempty"`
-	LastChange     time.Time `json:"last_change,omitempty"`
+	FirstFailureAt time.Time `json:"first_failure_at,omitzero"`
+	IncidentStart  time.Time `json:"incident_start,omitzero"`
+	LastChange     time.Time `json:"last_change,omitzero"`
 	// Unstable and UnstableNoticeAt implement the cooldown of the "N of the
 	// last M" detector: the fact that a notice was sent has to survive a
 	// restart, or a crash loop turns into a notification loop.
 	Unstable         bool      `json:"unstable,omitempty"`
-	UnstableNoticeAt time.Time `json:"unstable_notice_at,omitempty"`
+	UnstableNoticeAt time.Time `json:"unstable_notice_at,omitzero"`
 }
 
 // Snapshot is the whole durable state, as written to disk.
 type Snapshot struct {
 	Version   int                   `json:"version"`
-	UpdatedAt time.Time             `json:"updated_at"`
+	UpdatedAt time.Time             `json:"updated_at,omitzero"`
 	Checks    map[string]CheckState `json:"checks"`
 }
 
