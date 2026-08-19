@@ -216,6 +216,9 @@ func TestValidateRejects(t *testing.T) {
 		{"telegram chat_id in file", minimal + "alerting:\n  telegram:\n    chat_id: \"1\"\n", "environment variable"},
 		{"http proxy for telegram", minimal + "alerting:\n  telegram:\n    proxy: http://proxy.example:8080\n", "socks5"},
 		{"proxy without host", minimal + "alerting:\n  telegram:\n    proxy: socks5://\n", "has no host"},
+		{"listen without port", "listen: 127.0.0.1\n" + minimal, "host:port"},
+		{"listen empty", "listen: \"\"\n" + minimal, "empty"},
+		{"listen bad port", "listen: 127.0.0.1:notaport\n" + minimal, "TCP port"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -235,6 +238,23 @@ func TestValidateRejects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestListenDefaultsToLoopback(t *testing.T) {
+	cfg := mustLoad(t, minimal)
+	if cfg.Listen != DefaultListen {
+		t.Errorf("listen = %q, want the loopback default %q", cfg.Listen, DefaultListen)
+	}
+	if !strings.HasPrefix(cfg.Listen, "127.0.0.1:") {
+		t.Errorf("listen = %q, default must be loopback-only", cfg.Listen)
+	}
+}
+
+func TestListenOverride(t *testing.T) {
+	cfg := mustLoad(t, "listen: 127.0.0.1:9090\n"+minimal)
+	if cfg.Listen != "127.0.0.1:9090" {
+		t.Errorf("listen = %q, want the configured address", cfg.Listen)
 	}
 }
 

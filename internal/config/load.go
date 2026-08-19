@@ -3,10 +3,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 // here, rather than in an UnmarshalYAML method, is what lets an error carry the
 // line it came from.
 type fileConfig struct {
+	Listen   *string       `yaml:"listen"`
 	State    *fileState    `yaml:"state"`
 	Defaults *fileDefaults `yaml:"defaults"`
 	Alerting *fileAlerting `yaml:"alerting"`
@@ -145,8 +148,12 @@ func structuralError(name string, errs ...error) error {
 
 func resolve(c *collector, raw *fileConfig) *Config {
 	cfg := &Config{
+		Listen:    DefaultListen,
 		StateFile: DefaultStateFile,
 		Alerting:  Alerting{BatchWindow: DefaultBatchWindow},
+	}
+	if raw.Listen != nil {
+		cfg.Listen = resolveListen(c, *raw.Listen)
 	}
 	if raw.State != nil && raw.State.File != nil {
 		if v, ok := expand(c, "state.file", *raw.State.File); ok {
@@ -210,6 +217,29 @@ func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {
 	if tg.Proxy != nil {
 		into.Telegram.Proxy = resolveProxy(c, "alerting.telegram.proxy", *tg.Proxy)
 	}
+}
+
+func resolveListen(c *collector, raw string) string {
+	expanded, ok := expand(c, "listen", raw)
+	if !ok {
+		return DefaultListen
+	}
+	expanded = strings.TrimSpace(expanded)
+	if expanded == "" {
+		c.addf("listen", "listen address is empty")
+		return DefaultListen
+	}
+	host, port, err := net.SplitHostPort(expanded)
+	if err != nil {
+		c.addf("listen", "listen address %q is not host:port (for example %q)", expanded, DefaultListen)
+		return DefaultListen
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 0 || n > 65535 {
+		c.addf("listen", "listen port %q is not a valid TCP port", port)
+		return DefaultListen
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func resolveProxy(c *collector, path, raw string) string {

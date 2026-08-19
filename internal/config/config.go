@@ -27,6 +27,11 @@ const (
 	DefaultAlert            = true
 	DefaultStateFile        = "state.json"
 	DefaultBatchWindow      = 45 * time.Second
+	// DefaultListen is loopback only. The status page and API are for the
+	// machine that runs lookout, not the network; publishing them is a
+	// deliberate listen: override (SPEC §11, and the task's stricter
+	// reading of "LAN" as the loopback default).
+	DefaultListen = "127.0.0.1:8080"
 
 	// Telegram credentials live in the environment, never in the config file
 	// (SPEC §6, §11). Empty values are treated as missing.
@@ -50,6 +55,7 @@ const (
 
 // Config is a validated configuration.
 type Config struct {
+	Listen    string
 	StateFile string
 	Alerting  Alerting
 	Checks    []Check
