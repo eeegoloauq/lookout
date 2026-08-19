@@ -85,6 +85,12 @@ func formatEvent(ev state.Event) string {
 		return formatUnstable(ev)
 	case state.EventSummary:
 		return formatSummary(ev)
+	case state.EventDrift:
+		return formatDrift(ev)
+	case state.EventExpiry:
+		return formatExpiry(ev)
+	case state.EventStale:
+		return formatStale(ev)
 	default:
 		return formatDown(ev)
 	}
@@ -176,6 +182,10 @@ func writeHTTP(b *strings.Builder, r check.Result) {
 		fmt.Fprintf(b, "HTTP %d in %s", r.StatusCode, dur)
 	case r.StatusCode > 0:
 		fmt.Fprintf(b, "HTTP %d", r.StatusCode)
+	case r.Rcode != "" && dur > 0:
+		fmt.Fprintf(b, "DNS %s in %s", r.Rcode, dur)
+	case r.Rcode != "":
+		fmt.Fprintf(b, "DNS %s", r.Rcode)
 	case dur > 0:
 		fmt.Fprintf(b, "no HTTP response in %s", dur)
 	default:
@@ -195,6 +205,67 @@ func writeBody(b *strings.Builder, r check.Result) {
 // glyph prefixes a headline with one status character. The text alone is
 // enough to read the message, but an alert is usually met in a crowded chat
 // list, where a colour is caught at a glance and a word is not.
+func formatDrift(ev state.Event) string {
+	var b strings.Builder
+	b.WriteString(title("DRIFT", ev.Check, ev.Group))
+	b.WriteString("\nDNS answers changed")
+	if ev.Drift != nil {
+		fmt.Fprintf(&b, "\nwas: %s", oneLine(clip(ev.Drift.Before, 200)))
+		fmt.Fprintf(&b, "\nnow: %s", oneLine(clip(ev.Drift.After, 200)))
+	}
+	return b.String()
+}
+
+func formatExpiry(ev state.Event) string {
+	x := ev.Expiry
+	kind := "EXPIRY"
+	what := "certificate"
+	if x != nil && x.Kind == state.ExpiryDomain {
+		kind = "DOMAIN"
+		what = "domain"
+	} else if x != nil && x.Kind == state.ExpiryCertificate {
+		kind = "CERT"
+	}
+	var b strings.Builder
+	b.WriteString(title(kind, ev.Check, ev.Group))
+	if x == nil {
+		return b.String()
+	}
+	b.WriteByte('\n')
+	switch {
+	case x.DaysLeft < 0:
+		fmt.Fprintf(&b, "%s expired %s ago", what, plural(-x.DaysLeft, "day"))
+	case x.DaysLeft == 0:
+		fmt.Fprintf(&b, "%s expires in less than a day", what)
+	default:
+		fmt.Fprintf(&b, "%s expires in %s", what, plural(x.DaysLeft, "day"))
+	}
+	if !x.NotAfter.IsZero() {
+		fmt.Fprintf(&b, "\nnot after %s", x.NotAfter.UTC().Format("2006-01-02 15:04 UTC"))
+	}
+	if !x.FreeDate.IsZero() {
+		fmt.Fprintf(&b, "\nfree-date %s", x.FreeDate.UTC().Format("2006-01-02"))
+	}
+	if x.State != "" {
+		fmt.Fprintf(&b, "\nstate %s", x.State)
+	}
+	return b.String()
+}
+
+func formatStale(ev state.Event) string {
+	var b strings.Builder
+	b.WriteString(title("STALE", ev.Check, ev.Group))
+	b.WriteString("\nregistry lookup has failed")
+	if ev.StaleFor > 0 {
+		fmt.Fprintf(&b, " for %s", fmtDuration(ev.StaleFor))
+	}
+	if !ev.Result.DomainExpiresAt.IsZero() {
+		fmt.Fprintf(&b, "\nlast known expiry %s", ev.Result.DomainExpiresAt.UTC().Format("2006-01-02"))
+	}
+	writeCause(&b, ev.Result)
+	return b.String()
+}
+
 func glyph(kind string) string {
 	switch kind {
 	case "DOWN":
@@ -205,6 +276,12 @@ func glyph(kind string) string {
 		return "\U0001F7E0 "
 	case "SUMMARY":
 		return "\U0001F4E6 "
+	case "DRIFT":
+		return "\U0001F7E3 "
+	case "CERT", "DOMAIN", "EXPIRY":
+		return "\U0001F7E1 "
+	case "STALE":
+		return "\u26AA "
 	}
 	return ""
 }

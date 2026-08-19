@@ -36,6 +36,20 @@ type CheckStatus struct {
 	Uptime24h *UptimeView `json:"uptime_24h"`
 	// Incident is null unless the check is in a confirmed outage.
 	Incident *IncidentView `json:"incident"`
+
+	// CertDaysLeft is null when no certificate has been observed.
+	// Zero means "expires within 24h", not "unknown" — emitting 0 for
+	// an HTTP check would page as expired.
+	CertDaysLeft *int       `json:"cert_days_left"`
+	CertNotAfter *time.Time `json:"cert_not_after"`
+	// DomainDaysLeft is null until a registry lookup has succeeded.
+	DomainDaysLeft *int       `json:"domain_days_left"`
+	DomainExpires  *time.Time `json:"domain_expires_at"`
+	DomainState    string     `json:"domain_state,omitempty"`
+	DomainSource   string     `json:"domain_source,omitempty"`
+	// DomainLookupUnknown is true while the registry has not answered
+	// since DomainUnknownSince — not the same as a down domain.
+	DomainLookupUnknown bool `json:"domain_lookup_unknown,omitempty"`
 }
 
 // ProbeView is the most recent probe of a check.
@@ -150,6 +164,21 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 			out.Incident.DurationMS = 0
 		}
 	}
+	if !cs.CertNotAfter.IsZero() {
+		d := state.DaysLeft(cs.CertNotAfter, now)
+		t := cs.CertNotAfter.UTC()
+		out.CertDaysLeft = &d
+		out.CertNotAfter = &t
+	}
+	if !cs.DomainExpiresAt.IsZero() {
+		d := state.DaysLeft(cs.DomainExpiresAt, now)
+		t := cs.DomainExpiresAt.UTC()
+		out.DomainDaysLeft = &d
+		out.DomainExpires = &t
+		out.DomainState = cs.DomainState
+		out.DomainSource = cs.DomainSource
+	}
+	out.DomainLookupUnknown = !cs.DomainUnknownSince.IsZero()
 	return out
 }
 
@@ -172,7 +201,7 @@ func historyPoints(h *history.History, name string) []HistoryPoint {
 	for i, p := range src {
 		out[i] = HistoryPoint{
 			At:         p.At.UTC(),
-			OK:         !p.Outcome.Failed(),
+			OK:         p.Outcome.Succeeded(),
 			Outcome:    string(p.Outcome),
 			DurationMS: p.Duration.Milliseconds(),
 			StatusCode: p.StatusCode,

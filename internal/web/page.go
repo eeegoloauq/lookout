@@ -36,6 +36,7 @@ type pageRow struct {
 	Checked  string
 	Latency  string
 	Uptime   string
+	Expiry   string
 	Incident string
 }
 
@@ -53,6 +54,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			Checked:  "—",
 			Latency:  "—",
 			Uptime:   "—",
+			Expiry:   "—",
 			Incident: "—",
 		}
 		switch {
@@ -79,6 +81,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 		if c.Incident != nil {
 			row.Incident = formatSpan(time.Duration(c.Incident.DurationMS) * time.Millisecond)
 		}
+		row.Expiry = formatExpiry(c)
 		rows = append(rows, row)
 	}
 
@@ -161,6 +164,32 @@ func formatLatency(d time.Duration) string {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func formatExpiry(c CheckStatus) string {
+	switch {
+	case c.CertDaysLeft != nil && c.DomainDaysLeft != nil:
+		return fmt.Sprintf("cert %s · domain %s", formatDays(*c.CertDaysLeft), formatDays(*c.DomainDaysLeft))
+	case c.CertDaysLeft != nil:
+		return "cert " + formatDays(*c.CertDaysLeft)
+	case c.DomainDaysLeft != nil:
+		return "domain " + formatDays(*c.DomainDaysLeft)
+	case c.DomainLookupUnknown:
+		return "registry ?"
+	default:
+		return "—"
+	}
+}
+
+func formatDays(n int) string {
+	switch {
+	case n < 0:
+		return fmt.Sprintf("%dd ago", -n)
+	case n == 0:
+		return "<1d"
+	default:
+		return fmt.Sprintf("%dd", n)
+	}
 }
 
 func formatSpan(d time.Duration) string {

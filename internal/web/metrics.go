@@ -16,8 +16,8 @@ import (
 // §1.5 (Blackbox: probe_success / probe_duration_seconds as gauges of
 // the last result) and §4.1 (lookout_undelivered_alert_age_seconds).
 // They are prefixed so they cannot collide with a real Blackbox scrape
-// of the same Prometheus. Certificate and domain expiry series are
-// omitted until those probes exist — emitting 0 would page as "expired".
+// of the same Prometheus. Certificate and domain gauges are omitted
+// until a value has been observed — emitting 0 would page as "expired".
 
 func (s *server) metrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -38,6 +38,10 @@ func (s *server) writeMetrics(w io.Writer, now time.Time) {
 		uptime        float64
 		haveIncident  bool
 		incident      float64
+		haveCert      bool
+		certDays      float64
+		haveDomain    bool
+		domainDays    float64
 		check, group  string
 	}
 	rows := make([]series, 0, len(cfg.Checks))
@@ -58,11 +62,17 @@ func (s *server) writeMetrics(w io.Writer, now time.Time) {
 				}
 				row.haveIncident, row.incident = true, d
 			}
+			if !cs.CertNotAfter.IsZero() {
+				row.haveCert, row.certDays = true, float64(state.DaysLeft(cs.CertNotAfter, now))
+			}
+			if !cs.DomainExpiresAt.IsZero() {
+				row.haveDomain, row.domainDays = true, float64(state.DaysLeft(cs.DomainExpiresAt, now))
+			}
 		}
 		if ring, ok := s.mon.History().Ring(c.Name); ok {
 			if last, ok := ring.Last(); ok {
 				row.haveProbe = true
-				row.probeOK = !last.Outcome.Failed()
+				row.probeOK = last.Outcome.Succeeded()
 				row.probeDuration = last.Duration.Seconds()
 			}
 			ratio, samples := ring.Uptime(now.Add(-history.Retention))
@@ -134,6 +144,24 @@ func (s *server) writeMetrics(w io.Writer, now time.Time) {
 			continue
 		}
 		writeSample(w, "lookout_incident_duration_seconds", r.check, r.group, formatFloat(r.incident))
+	}
+
+	writeFamily(w, "lookout_cert_days_left", "gauge",
+		"Whole days until the leaf certificate expires. Absent when no certificate has been observed.")
+	for _, r := range rows {
+		if !r.haveCert {
+			continue
+		}
+		writeSample(w, "lookout_cert_days_left", r.check, r.group, formatFloat(r.certDays))
+	}
+
+	writeFamily(w, "lookout_domain_days_left", "gauge",
+		"Whole days until the domain registration expires. Absent when the registry has not been read.")
+	for _, r := range rows {
+		if !r.haveDomain {
+			continue
+		}
+		writeSample(w, "lookout_domain_days_left", r.check, r.group, formatFloat(r.domainDays))
 	}
 
 	box := s.mon.Outbox()

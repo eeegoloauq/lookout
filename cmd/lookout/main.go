@@ -169,7 +169,7 @@ func serve(args []string, stderr io.Writer) error {
 		opts = append(opts, monitor.WithNotifier(notifier))
 	}
 
-	m := monitor.New(cfg, probe.NewHTTP(), opts...)
+	m := monitor.New(cfg, probe.New(), opts...)
 	// Load durable state before the first HTTP request so a start page
 	// hitting /api/status during startup does not see a blank machine
 	// that is about to be restored.

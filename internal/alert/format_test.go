@@ -187,6 +187,41 @@ func TestFormatSummaryCountsWhatOverflowFolded(t *testing.T) {
 
 // A status glyph leads every headline: alerts are read in a crowded chat
 // list, where colour registers before words do.
+func TestFormatExpiryNamesTheWindow(t *testing.T) {
+	got := Format([]state.Event{{
+		Kind:  state.EventExpiry,
+		Check: "Photos",
+		Group: "Services",
+		Expiry: &state.Expiry{
+			Kind:      state.ExpiryCertificate,
+			DaysLeft:  14,
+			Threshold: 14,
+			NotAfter:  time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
+		},
+	}})
+	for _, want := range []string{
+		"CERT Photos (Services)",
+		"certificate expires in 14 days",
+		"not after 2026-09-02",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestFormatDriftShowsBeforeAndAfter(t *testing.T) {
+	got := Format([]state.Event{{
+		Kind:  state.EventDrift,
+		Check: "MX",
+		Group: "Public",
+		Drift: &state.Drift{Before: "NOERROR\nMX 10 mail.service.example.", After: "NXDOMAIN"},
+	}})
+	if !strings.Contains(got, "was:") || !strings.Contains(got, "now: NXDOMAIN") {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestHeadlinesCarryAStatusGlyph(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -196,6 +231,10 @@ func TestHeadlinesCarryAStatusGlyph(t *testing.T) {
 		{"down", state.Event{Kind: state.EventDown, Check: "Photos", Group: "Services"}, "\U0001F534 DOWN Photos"},
 		{"up", state.Event{Kind: state.EventUp, Check: "Photos"}, "\u2705 UP Photos"},
 		{"unstable", state.Event{Kind: state.EventUnstable, Check: "Photos"}, "\U0001F7E0 UNSTABLE Photos"},
+		{"drift", state.Event{Kind: state.EventDrift, Check: "MX"}, "\U0001F7E3 DRIFT MX"},
+		{"cert", state.Event{Kind: state.EventExpiry, Check: "API", Expiry: &state.Expiry{Kind: state.ExpiryCertificate, DaysLeft: 14, Threshold: 14}}, "\U0001F7E1 CERT API"},
+		{"domain", state.Event{Kind: state.EventExpiry, Check: "Reg", Expiry: &state.Expiry{Kind: state.ExpiryDomain, DaysLeft: 30, Threshold: 30}}, "\U0001F7E1 DOMAIN Reg"},
+		{"stale", state.Event{Kind: state.EventStale, Check: "Reg"}, "\u26AA STALE Reg"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Format([]state.Event{tc.event})

@@ -26,6 +26,15 @@ type Prober interface {
 	Probe(ctx context.Context, c config.Check) check.Result
 }
 
+// registryView is implemented by the production probe set. Tests that
+// inject a fake prober simply don't persist a registry cache.
+type registryView interface {
+	LoadRegistry(state.RegistryCache)
+	Registry() state.RegistryCache
+	RegistryDirty() bool
+	ClearRegistryDirty()
+}
+
 // Monitor owns the scheduling loop and the state that results feed into.
 type Monitor struct {
 	cfg      *config.Config
@@ -159,6 +168,9 @@ func (m *Monitor) restore() {
 	if m.pipeline != nil {
 		m.pipeline.Restore(snap.Outbox)
 	}
+	if rv, ok := m.prober.(registryView); ok {
+		rv.LoadRegistry(snap.Registry)
+	}
 	names := make([]string, 0, len(m.cfg.Checks))
 	for _, c := range m.cfg.Checks {
 		names = append(names, c.Name)
@@ -233,9 +245,14 @@ func (m *Monitor) probe(ctx context.Context, c config.Check) {
 	for _, ev := range m.machine.Observe(c, res) {
 		m.emit(ev)
 	}
-	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) {
+	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) || registryDirty(m.prober) {
 		m.save()
 	}
+}
+
+func registryDirty(p Prober) bool {
+	rv, ok := p.(registryView)
+	return ok && rv.RegistryDirty()
 }
 
 func (m *Monitor) emit(ev state.Event) {
@@ -267,6 +284,18 @@ func (m *Monitor) logEvent(ev state.Event) {
 	case state.EventUnstable:
 		attrs = append(attrs, "failures", ev.Failures, "window", ev.Window, "reason", ev.Result.Reason())
 		m.log.Warn("check is unstable", attrs...)
+	case state.EventDrift:
+		m.log.Warn("dns zone changed", attrs...)
+	case state.EventExpiry:
+		kind, days := "", 0
+		if ev.Expiry != nil {
+			kind, days = ev.Expiry.Kind, ev.Expiry.DaysLeft
+		}
+		attrs = append(attrs, "kind", kind, "days", days)
+		m.log.Warn("expiry notice", attrs...)
+	case state.EventStale:
+		attrs = append(attrs, "silent_for", ev.StaleFor)
+		m.log.Warn("registry lookup stale", attrs...)
 	}
 }
 
@@ -278,14 +307,21 @@ func (m *Monitor) save() {
 	defer m.saveMu.Unlock()
 	machineDirty := m.machine.Dirty()
 	outboxDirty := m.pipeline != nil && m.pipeline.Dirty()
-	if !machineDirty && !outboxDirty {
+	regDirty := registryDirty(m.prober)
+	if !machineDirty && !outboxDirty && !regDirty {
 		return
 	}
 	m.machine.ClearDirty()
 	if m.pipeline != nil {
 		m.pipeline.ClearDirty()
 	}
+	if rv, ok := m.prober.(registryView); ok {
+		rv.ClearRegistryDirty()
+	}
 	snap := m.machine.Snapshot()
+	if rv, ok := m.prober.(registryView); ok {
+		snap.Registry = rv.Registry()
+	}
 	if m.pipeline != nil {
 		snap.Outbox = m.pipeline.Snapshot()
 	} else {

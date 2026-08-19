@@ -25,6 +25,7 @@
       <th>Checked</th>
       <th>Time</th>
       <th>24h</th>
+      <th>Expiry</th>
       <th>Incident</th>
     </tr>
   </thead>
@@ -37,10 +38,11 @@
       <td class="num">{{.Checked}}</td>
       <td class="num">{{.Latency}}</td>
       <td class="num">{{.Uptime}}</td>
+      <td class="num">{{.Expiry}}</td>
       <td class="num">{{.Incident}}</td>
     </tr>
     {{else}}
-    <tr><td colspan="7">No checks configured.</td></tr>
+    <tr><td colspan="8">No checks configured.</td></tr>
     {{end}}
   </tbody>
 </table>

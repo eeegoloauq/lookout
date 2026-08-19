@@ -288,15 +288,73 @@ func TestMetricsCanonicalNames(t *testing.T) {
 		}
 	}
 	for _, leak := range []string{
-		"lookout_cert_days_left",
 		"probe_ssl_earliest_cert_expiry",
-		"lookout_domain_days_left",
-		"cert_days_left",
-		"domain_days_left",
 	} {
 		if strings.Contains(body, leak) {
-			t.Errorf("metrics contain %q, which this release does not probe", leak)
+			t.Errorf("metrics contain %q", leak)
 		}
+	}
+	// No certificate or domain has been observed on these HTTP checks,
+	// so the gauges must be absent — 0 would page as "expired".
+	if strings.Contains(body, "lookout_cert_days_left{") {
+		t.Errorf("cert gauge present without a certificate:\n%s", body)
+	}
+	if strings.Contains(body, "lookout_domain_days_left{") {
+		t.Errorf("domain gauge present without a registry lookup:\n%s", body)
+	}
+}
+
+func TestStatusAndMetricsExposeExpiry(t *testing.T) {
+	const src = `
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: https://photos.invalid/
+  - name: Registration
+    group: Public
+    type: domain
+    domain: service.example
+`
+	m := testMonitor(t, src)
+	now := time.Now()
+	httpCheck := m.Config().Checks[0]
+	domCheck := m.Config().Checks[1]
+	notAfter := now.Add(14 * 24 * time.Hour)
+	expires := now.Add(45 * 24 * time.Hour)
+	m.Machine().Observe(httpCheck, check.Result{
+		Name: httpCheck.Name, At: now, Outcome: check.OutcomeUp, Duration: time.Millisecond, StatusCode: 200,
+		CertNotAfter: notAfter,
+	})
+	m.History().Record(check.Result{Name: httpCheck.Name, At: now, Outcome: check.OutcomeUp, Duration: time.Millisecond})
+	m.Machine().Observe(domCheck, check.Result{
+		Name: domCheck.Name, At: now, Outcome: check.OutcomeUp,
+		DomainExpiresAt: expires, DomainSource: "rdap",
+	})
+
+	h := New(m, "test")
+	var doc StatusDocument
+	if err := json.Unmarshal(get(t, h, "/api/status").Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Checks[0].CertDaysLeft == nil || *doc.Checks[0].CertDaysLeft < 13 || *doc.Checks[0].CertDaysLeft > 14 {
+		t.Errorf("cert_days_left = %v", doc.Checks[0].CertDaysLeft)
+	}
+	if doc.Checks[1].DomainDaysLeft == nil || *doc.Checks[1].DomainDaysLeft < 44 || *doc.Checks[1].DomainDaysLeft > 45 {
+		t.Errorf("domain_days_left = %v", doc.Checks[1].DomainDaysLeft)
+	}
+
+	body := get(t, h, "/metrics").Body.String()
+	if !strings.Contains(body, `lookout_cert_days_left{check="Photos",group="Services"}`) {
+		t.Errorf("metrics missing cert gauge:\n%s", body)
+	}
+	if !strings.Contains(body, `lookout_domain_days_left{check="Registration",group="Public"}`) {
+		t.Errorf("metrics missing domain gauge:\n%s", body)
+	}
+
+	page := get(t, h, "/").Body.String()
+	if !strings.Contains(page, "cert ") || !strings.Contains(page, "domain ") {
+		t.Errorf("status page missing expiry:\n%s", page)
 	}
 }
 
