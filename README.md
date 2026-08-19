@@ -33,7 +33,8 @@ lookout unmute
 
 `lookout run` listens on `listen` in the config (default `127.0.0.1:5665`):
 
-- `GET /` — status page: one HTML list, no JavaScript, no external assets
+- `GET /` — status page: one HTML list, no JavaScript, no external assets;
+  rows open through the URL fragment, so the open one survives the reload
 - `GET /api/status` — JSON of every check (versioned; this is the public contract)
 - `GET /api/checks/<name>` — recent probe history from the in-memory ring
 - `GET /metrics` — Prometheus text format
