@@ -42,8 +42,9 @@ type Monitor struct {
 	// alerts the next time it saves check state.
 	loadedOutbox state.Outbox
 
-	sem    chan struct{}
-	saveMu sync.Mutex
+	sem         chan struct{}
+	saveMu      sync.Mutex
+	restoreOnce sync.Once
 }
 
 // Option configures a Monitor.
@@ -77,11 +78,28 @@ func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
 	for _, opt := range opts {
 		opt(m)
 	}
+	// Rings exist before Run so the status API can answer immediately
+	// with "no samples" rather than pretending a check is missing.
+	for _, c := range cfg.Checks {
+		m.hist.Track(c.Name, c.Interval)
+	}
 	if m.notifier != nil {
 		m.pipeline = alert.NewPipeline(m.notifier, m.cfg.Alerting.BatchWindow, m.log)
 		m.pipeline.SetPersist(m.save)
 	}
 	return m
+}
+
+// Config is the resolved configuration this monitor is running.
+func (m *Monitor) Config() *config.Config { return m.cfg }
+
+// Outbox is a snapshot of the undelivered alert queue. /healthz uses it
+// to decide whether lookout can still call for help.
+func (m *Monitor) Outbox() state.Outbox {
+	if m.pipeline != nil {
+		return m.pipeline.Snapshot()
+	}
+	return m.loadedOutbox.Clone()
 }
 
 // Machine exposes the state machine, for the API and for tests.
@@ -93,14 +111,7 @@ func (m *Monitor) History() *history.History { return m.hist }
 // Run probes every check until ctx is cancelled, then persists the final state.
 // It returns nil on a clean shutdown: a cancelled context is how lookout stops.
 func (m *Monitor) Run(ctx context.Context) error {
-	m.restore()
-
-	names := make([]string, 0, len(m.cfg.Checks))
-	for _, c := range m.cfg.Checks {
-		names = append(names, c.Name)
-		m.hist.Track(c.Name, c.Interval)
-	}
-	m.machine.Prune(names)
+	m.Restore()
 
 	start := time.Now()
 	var wg sync.WaitGroup
@@ -125,9 +136,19 @@ func (m *Monitor) Run(ctx context.Context) error {
 	return nil
 }
 
-// restore loads durable state. Every failure mode here is survivable, and none
-// of them may stop the monitor from starting: a monitor that refuses to start
-// is a monitor that is silent, which is the failure this project exists to fix.
+// Restore loads durable state and drops entries for checks that left
+// the configuration. It is safe to call more than once: the HTTP server
+// wants state loaded before the first request, and Run wants the same
+// load before the first probe; doing it twice would be a race, not a
+// refresh.
+//
+// Every failure mode here is survivable, and none of them may stop the
+// monitor from starting: a monitor that refuses to start is a monitor
+// that is silent, which is the failure this project exists to fix.
+func (m *Monitor) Restore() {
+	m.restoreOnce.Do(m.restore)
+}
+
 func (m *Monitor) restore() {
 	snap, err := m.store.Load()
 	if err != nil {
@@ -138,6 +159,11 @@ func (m *Monitor) restore() {
 	if m.pipeline != nil {
 		m.pipeline.Restore(snap.Outbox)
 	}
+	names := make([]string, 0, len(m.cfg.Checks))
+	for _, c := range m.cfg.Checks {
+		names = append(names, c.Name)
+	}
+	m.machine.Prune(names)
 }
 
 // loop probes one check on its own schedule.
