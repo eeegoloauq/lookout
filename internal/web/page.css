@@ -143,12 +143,12 @@ h2 {
 .row { border-bottom: 1px solid var(--rule); }
 .row:first-of-type { border-top: 1px solid var(--rule); }
 
-/* Expansion is a URL fragment rather than a disclosure widget: the page
-   reloads itself every minute, and a reload would close a native one under
-   whoever was reading it. The fragment survives, and the address of a sick
-   check becomes something you can send to yourself. The cost is that one
-   row is open at a time — on a board where you diagnose one thing at a
-   time, that is the right number. */
+/* Expansion is a checkbox, hidden and driven by the row's own label. A URL
+   fragment survives a reload but makes the browser scroll the row to the
+   top of the window on every click, which reads as the page jerking under
+   the pointer; a checkbox moves nothing, opens as many rows as you like,
+   and is operable from the keyboard. The reload is what would close it, and
+   the script in the head is what stops the reload while it is open. */
 .summary {
   position: relative;
   display: grid;
@@ -164,34 +164,21 @@ h2 {
 /* The disclosure triangle is replaced by the row itself being clickable:
    one affordance, not two. */
 .summary:hover { background: var(--panel); }
-.summary:focus-within { outline: 2px solid var(--ink); outline-offset: -2px; }
 
 .panel { display: none; }
-.row:target .panel { display: block; }
+.toggle:checked ~ .panel { display: block; }
 
-/* Two invisible links stacked on the row: one opens it, one closes it, and
-   which of them is on top depends on whether the row is the target. That is
-   what makes a second click collapse the row again — with :target alone,
-   clicking an open row just re-targets it and nothing happens. */
-.hit {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-}
-
-.shut { display: none; }
-.row:target .open { display: none; }
-.row:target .shut { display: block; }
-
-/* Text for whoever cannot see where the link is. */
-.sr {
+/* The checkbox itself is never seen: it is the row's state, not a control
+   of its own. It stays focusable, so the row can be opened with the
+   keyboard, and the focus ring is drawn on the row instead. */
+.toggle {
   position: absolute;
   width: 1px;
   height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+  opacity: 0;
 }
+
+.toggle:focus-visible ~ .summary { outline: 2px solid var(--ink); outline-offset: -2px; }
 
 /* The state is said twice on purpose — the colour bar on the left edge is
    what the eye catches, the word is what stays true in a screenshot, in a

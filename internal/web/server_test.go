@@ -542,11 +542,18 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 			t.Errorf("page missing %q", want)
 		}
 	}
-	// The page must fetch nothing and run nothing on its own. A link to a
-	// check's own target is content — following it is the reader's choice —
-	// but nothing may load from elsewhere without being asked.
+	// The page must fetch nothing and load nothing. It carries exactly one
+	// inline script — a timer that skips a reload while a row is open — and
+	// that script must never grow into a client: no fetching, no DOM
+	// building, no module of any kind.
+	if n := strings.Count(body, "<script"); n != 1 {
+		t.Errorf("page has %d scripts, it is allowed exactly one", n)
+	}
 	for _, forbidden := range []string{
-		"<script",
+		"fetch(",
+		"XMLHttpRequest",
+		"import ",
+		"innerHTML",
 		"<img",
 		"<iframe",
 		"<link",
@@ -708,7 +715,7 @@ func TestPageRowOpensIntoDetail(t *testing.T) {
 	feed(t, m, "Router", "DDD", now.Add(-30*time.Minute), 1500*time.Millisecond, 502)
 	body := get(t, New(m, "test"), "/").Body.String()
 	for _, want := range []string{
-		`class="hit open" href="#c-`,
+		`class="summary" for="t-c-`,
 		"watching",
 		"down since",
 		"last failure",
@@ -1072,36 +1079,34 @@ func TestFailedSlotTooltipSaysWhenAndHowBad(t *testing.T) {
 	}
 }
 
-// The page reloads itself every minute, and a reload closes a <details>
-// under whoever was reading it. Expansion lives in the URL instead, which
-// survives the reload and makes the sick check a link you can send.
-func TestOpenRowSurvivesTheReload(t *testing.T) {
+// Two annoyances pull against each other: a board that shows stale state,
+// and one that closes the panel you are reading. The row is a checkbox, so
+// opening it moves nothing on the page (a URL fragment made the browser
+// scroll the row to the top on every click), and the reload timer skips its
+// turn while any row is open.
+func TestOpenRowIsNotClosedByTheReload(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
 	body := get(t, New(m, "test"), "/").Body.String()
-	if strings.Contains(body, "<details") || strings.Contains(body, "<summary") {
-		t.Error("still using a disclosure widget that a reload closes")
+	if strings.Contains(body, "<details") || strings.Contains(body, ":target") {
+		t.Error("expansion still moves the page or closes on reload")
 	}
-	if !strings.Contains(body, `<div class="row up" id="c-photos"`) {
-		t.Errorf("row has no stable fragment id:\n%s", body)
+	for _, want := range []string{
+		`<input class="toggle" type="checkbox" id="t-c-photos">`,
+		`<label class="summary" for="t-c-photos">`,
+		".toggle:checked ~ .panel",
+		`.toggle:checked`,
+		"location.reload",
+		"<noscript><meta http-equiv=\"refresh\"",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
 	}
-	if !strings.Contains(body, `href="#c-photos"`) {
-		t.Errorf("nothing links to the row's own fragment:\n%s", body)
-	}
-	// Clicking an open row has to close it again. With :target alone a
-	// second click only re-targets the row and nothing moves, so an open
-	// row carries a second link, to no fragment at all.
-	if !strings.Contains(body, `class="hit shut" href="#"`) {
-		t.Error("an open row cannot be collapsed by clicking it again")
-	}
-	if !strings.Contains(body, ".row:target .shut") {
-		t.Error("the collapse link is not the one on top while the row is open")
-	}
-	if !strings.Contains(body, ".row:target .panel") {
-		t.Error("the open row is not driven by :target")
-	}
-	if !strings.Contains(body, `class="close" href="#"`) {
-		t.Error("an opened row cannot be closed again")
+	// Closing has to be possible from the panel too, without hunting for
+	// the row header again on a long one.
+	if !strings.Contains(body, `<label class="close" for="t-c-photos">close</label>`) {
+		t.Errorf("no way to close an open row from inside it:\n%s", body)
 	}
 }
 
