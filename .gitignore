@@ -1,0 +1,8 @@
+# real configuration and secrets never belong in this repository
+config.yaml
+*.env
+/lookout
+/data/
+*.db
+*.db-wal
+*.db-shm
