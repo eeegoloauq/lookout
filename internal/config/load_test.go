@@ -281,6 +281,35 @@ alerting:
 	}
 }
 
+// Alerting is on unless the config says otherwise in so many words. The
+// point is that a monitor which notifies nobody is a deliberate choice and
+// never the result of an absent section or a missing environment variable.
+func TestAlertingModeDefaultsToTelegram(t *testing.T) {
+	if got := mustLoad(t, minimal).Alerting.Mode; got != ModeTelegram {
+		t.Errorf("mode = %q, want %q", got, ModeTelegram)
+	}
+}
+
+func TestAlertingCanBeTurnedOffByName(t *testing.T) {
+	cfg := mustLoad(t, minimal+"\nalerting:\n  mode: none\n")
+	if cfg.Alerting.Mode != ModeNone {
+		t.Errorf("mode = %q, want %q", cfg.Alerting.Mode, ModeNone)
+	}
+}
+
+func TestAlertingModeRejectsNonsenseAndHalfConfiguration(t *testing.T) {
+	for name, src := range map[string]string{
+		"unknown mode":         minimal + "\nalerting:\n  mode: carrier-pigeon\n",
+		"none with transport":  minimal + "\nalerting:\n  mode: none\n  telegram:\n    proxy: socks5://proxy.example:1080\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load("test.yaml", []byte(src)); err == nil {
+				t.Fatal("want an error, got none")
+			}
+		})
+	}
+}
+
 func TestExampleConfigLoads(t *testing.T) {
 	t.Setenv("LOOKOUT_BASIC_AUTH", "dXNlcjpwYXNz")
 	if _, err := LoadFile("../../config.example.yaml"); err != nil {

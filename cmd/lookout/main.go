@@ -106,14 +106,19 @@ func validate(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "state file: %s\n", cfg.StateFile)
 	fmt.Fprintf(out, "listen: %s\n", cfg.Listen)
-	fmt.Fprintf(out, "alerting: telegram, batch window %s", cfg.Alerting.BatchWindow)
-	if cfg.Alerting.Telegram.Proxy != "" {
-		fmt.Fprintf(out, ", socks5 proxy configured")
-	}
-	fmt.Fprintln(out)
-	if os.Getenv(config.EnvTelegramToken) == "" || os.Getenv(config.EnvTelegramChatID) == "" {
-		fmt.Fprintf(out, "note: %s and %s must be set for lookout run to start\n",
-			config.EnvTelegramToken, config.EnvTelegramChatID)
+	if cfg.Alerting.Mode == config.ModeNone {
+		// Loud on purpose: a monitor that cannot notify is a dashboard.
+		fmt.Fprintln(out, "alerting: DISABLED (alerting.mode: none) — nothing will ever be sent")
+	} else {
+		fmt.Fprintf(out, "alerting: telegram, batch window %s", cfg.Alerting.BatchWindow)
+		if cfg.Alerting.Telegram.Proxy != "" {
+			fmt.Fprintf(out, ", socks5 proxy configured")
+		}
+		fmt.Fprintln(out)
+		if os.Getenv(config.EnvTelegramToken) == "" || os.Getenv(config.EnvTelegramChatID) == "" {
+			fmt.Fprintf(out, "note: %s and %s must be set for lookout run to start\n",
+				config.EnvTelegramToken, config.EnvTelegramChatID)
+		}
 	}
 
 	silent := 0
@@ -153,12 +158,18 @@ func serve(args []string, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	notifier, err := alert.TelegramFromEnv(cfg.Alerting.Telegram.Proxy)
-	if err != nil {
-		return err
+	opts := []monitor.Option{monitor.WithLogger(log)}
+	if cfg.Alerting.Mode == config.ModeNone {
+		log.Warn("alerting is disabled by configuration: state, page and metrics only")
+	} else {
+		notifier, err := alert.TelegramFromEnv(cfg.Alerting.Telegram.Proxy)
+		if err != nil {
+			return err
+		}
+		opts = append(opts, monitor.WithNotifier(notifier))
 	}
 
-	m := monitor.New(cfg, probe.NewHTTP(), monitor.WithLogger(log), monitor.WithNotifier(notifier))
+	m := monitor.New(cfg, probe.NewHTTP(), opts...)
 	// Load durable state before the first HTTP request so a start page
 	// hitting /api/status during startup does not see a blank machine
 	// that is about to be restored.

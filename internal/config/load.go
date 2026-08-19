@@ -31,6 +31,7 @@ type fileConfig struct {
 }
 
 type fileAlerting struct {
+	Mode        *string       `yaml:"mode"`
 	BatchWindow *string       `yaml:"batch_window"`
 	Telegram    *fileTelegram `yaml:"telegram"`
 }
@@ -150,7 +151,7 @@ func resolve(c *collector, raw *fileConfig) *Config {
 	cfg := &Config{
 		Listen:    DefaultListen,
 		StateFile: DefaultStateFile,
-		Alerting:  Alerting{BatchWindow: DefaultBatchWindow},
+		Alerting:  Alerting{Mode: ModeTelegram, BatchWindow: DefaultBatchWindow},
 	}
 	if raw.Listen != nil {
 		cfg.Listen = resolveListen(c, *raw.Listen)
@@ -196,12 +197,26 @@ func resolve(c *collector, raw *fileConfig) *Config {
 }
 
 func resolveAlerting(c *collector, in *fileAlerting, into *Alerting) {
+	if in.Mode != nil {
+		switch Mode(*in.Mode) {
+		case ModeTelegram, ModeNone:
+			into.Mode = Mode(*in.Mode)
+		default:
+			c.addf("alerting.mode", "unknown alerting mode %q: use %q or %q", *in.Mode, ModeTelegram, ModeNone)
+		}
+	}
 	if in.BatchWindow != nil {
 		if v, ok := duration(c, "alerting.batch_window", *in.BatchWindow); ok {
 			into.BatchWindow = v
 		}
 	}
 	if in.Telegram == nil {
+		return
+	}
+	if into.Mode == ModeNone {
+		// Half-configured alerting is worse than either extreme: the operator
+		// believes a channel exists and it does not.
+		c.addf("alerting.telegram", "alerting.mode is %q, so a telegram section cannot take effect", ModeNone)
 		return
 	}
 	tg := in.Telegram

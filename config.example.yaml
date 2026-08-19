@@ -34,6 +34,12 @@ defaults:
   # never be a configuration accident.
 
 alerting:
+  # mode: telegram is the default. The only way to run without notifications
+  # is to say so here; a missing section or a missing token is an error, not
+  # silent silence.
+  #
+  #   mode: none    # state, page and metrics only, nothing is ever sent
+  #
   # After the first ready alert, wait this long and send every check that
   # changed during the window as one message. Stops a gateway drop from
   # producing one Telegram message per check.

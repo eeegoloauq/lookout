@@ -65,9 +65,25 @@ type Config struct {
 // deliberately not here: they come from the environment so a copied config
 // cannot leak them.
 type Alerting struct {
+	// Mode selects the transport. "none" is the only way to run without
+	// notifications: silence has to be asked for, never inherited from a
+	// missing section (SPEC §1.1). It exists so that a monitor whose
+	// credentials went missing is a configuration error, while a monitor
+	// that is deliberately page-only still starts.
+	Mode        Mode
 	BatchWindow time.Duration
 	Telegram    Telegram
 }
+
+// Mode is the alerting transport.
+type Mode string
+
+const (
+	// ModeTelegram delivers alerts to Telegram. It is the default.
+	ModeTelegram Mode = "telegram"
+	// ModeNone delivers nothing: state, page and metrics only.
+	ModeNone Mode = "none"
+)
 
 // Telegram is the Bot API transport. Proxy is a SOCKS5 URL; empty means
 // dial api.telegram.org directly.
