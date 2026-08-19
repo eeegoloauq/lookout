@@ -184,3 +184,24 @@ func TestFormatSummaryCountsWhatOverflowFolded(t *testing.T) {
 		}
 	}
 }
+
+// A status glyph leads every headline: alerts are read in a crowded chat
+// list, where colour registers before words do.
+func TestHeadlinesCarryAStatusGlyph(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		event state.Event
+		want  string
+	}{
+		{"down", state.Event{Kind: state.EventDown, Check: "Photos", Group: "Services"}, "\U0001F534 DOWN Photos"},
+		{"up", state.Event{Kind: state.EventUp, Check: "Photos"}, "\u2705 UP Photos"},
+		{"unstable", state.Event{Kind: state.EventUnstable, Check: "Photos"}, "\U0001F7E0 UNSTABLE Photos"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Format([]state.Event{tc.event})
+			if !strings.HasPrefix(got, tc.want) {
+				t.Fatalf("message does not start with %q:\n%s", tc.want, got)
+			}
+		})
+	}
+}

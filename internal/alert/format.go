@@ -128,10 +128,10 @@ func formatUnstable(ev state.Event) string {
 func formatSummary(ev state.Event) string {
 	s := ev.Summary
 	if s == nil {
-		return "SUMMARY (empty)"
+		return glyph("SUMMARY") + "SUMMARY (empty)"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "SUMMARY %s folded after the delivery queue filled", plural(s.Count, "alert"))
+	fmt.Fprintf(&b, "%sSUMMARY %s folded after the delivery queue filled", glyph("SUMMARY"), plural(s.Count, "alert"))
 	if !s.From.IsZero() && !s.To.IsZero() {
 		fmt.Fprintf(&b, "\nfrom %s to %s", s.From.UTC().Format("2006-01-02 15:04:05 UTC"), s.To.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
@@ -192,11 +192,28 @@ func writeBody(b *strings.Builder, r check.Result) {
 	b.WriteString(sample)
 }
 
+// glyph prefixes a headline with one status character. The text alone is
+// enough to read the message, but an alert is usually met in a crowded chat
+// list, where a colour is caught at a glance and a word is not.
+func glyph(kind string) string {
+	switch kind {
+	case "DOWN":
+		return "\U0001F534 "
+	case "UP":
+		return "\u2705 "
+	case "UNSTABLE":
+		return "\U0001F7E0 "
+	case "SUMMARY":
+		return "\U0001F4E6 "
+	}
+	return ""
+}
+
 func title(kind, name, group string) string {
 	if group != "" {
-		return kind + " " + name + " (" + group + ")"
+		return glyph(kind) + kind + " " + name + " (" + group + ")"
 	}
-	return kind + " " + name
+	return glyph(kind) + kind + " " + name
 }
 
 func oneLine(s string) string {

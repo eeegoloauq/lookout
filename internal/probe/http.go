@@ -69,7 +69,7 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 	if err != nil {
 		res.Outcome = check.OutcomeDown
 		res.Err = "request could not be built: " + redact(err)
-		res.Duration = time.Now().Sub(res.At)
+		res.Duration = time.Since(res.At)
 		return res
 	}
 	for name, value := range c.Headers {
@@ -79,7 +79,7 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 	start := time.Now()
 	resp, err := p.client.Do(req)
 	if err != nil {
-		res.Duration = time.Now().Sub(start)
+		res.Duration = time.Since(start)
 		res.Outcome = check.OutcomeDown
 		res.Err = transportError(err, c.Timeout)
 		return res
@@ -88,7 +88,7 @@ func (p *HTTP) Probe(ctx context.Context, c config.Check) check.Result {
 
 	limited := io.LimitReader(resp.Body, maxBody+1)
 	body, readErr := io.ReadAll(limited)
-	res.Duration = time.Now().Sub(start)
+	res.Duration = time.Since(start)
 	res.StatusCode = resp.StatusCode
 	if readErr != nil {
 		res.Outcome = check.OutcomeDown
