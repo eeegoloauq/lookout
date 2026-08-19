@@ -9,6 +9,11 @@
 #
 # This release probes HTTP checks; dns and domain checks arrive in a later one.
 
+# Status page, JSON API and /metrics. Default is loopback only — the
+# page is for the machine that runs lookout, not the rest of the LAN.
+# Override to a LAN address if the start page lives on another host.
+listen: 127.0.0.1:8080
+
 state:
   # Durable state: current up/down, streak counters, incident starts.
   # Losing this file is safe — it costs history, not correctness.

@@ -11,7 +11,8 @@ one.
 
 Status: early development. `SPEC.md` is the design (in Russian); this release
 covers the check model, the HTTP probe, the threshold and instability state
-machine, durable state, the recent-history ring, and Telegram alert delivery.
+machine, durable state, the recent-history ring, Telegram alert delivery, and
+the status page / API / metrics.
 
 ## Build
 
@@ -23,8 +24,19 @@ CGO_ENABLED=0 go build -o lookout ./cmd/lookout
 
 ```sh
 lookout validate config.yaml    # every problem, with the line it is on
-lookout run [-v] config.yaml    # probe until interrupted
+lookout run [-v] config.yaml    # probe and serve the status page until interrupted
 ```
+
+`lookout run` listens on `listen` in the config (default `127.0.0.1:8080`):
+
+- `GET /` — status page: one HTML table, no JavaScript, no external assets
+- `GET /api/status` — JSON of every check (versioned; this is the public contract)
+- `GET /api/checks/<name>` — recent probe history from the in-memory ring
+- `GET /metrics` — Prometheus text format
+- `GET /healthz` — process liveness; **degraded** (HTTP 503) if alert delivery is stuck
+
+Authorization headers from the config are never serialized. URLs that carry
+userinfo have the credentials masked.
 
 `config.example.yaml` documents the format. Secrets are never written in the
 config: `${VAR}` reads them from the environment, and an unset variable is a
@@ -57,7 +69,16 @@ validation error rather than a silently empty header.
   from `LOOKOUT_TELEGRAM_TOKEN` and `LOOKOUT_TELEGRAM_CHAT_ID` — never from
   the config file.
 
-The status page, the API, DNS and domain checks are not in this release.
+- **A status page and JSON API** on loopback by default. `/api/status` is
+  versioned in the body (`version: 1`) so a separate start page can consume
+  it. `/healthz` is 503 when the alert outbox has failed several deliveries:
+  a monitor that cannot notify must look sick from the outside.
+- **Prometheus metrics** for the last probe (`lookout_probe_success`,
+  `lookout_probe_duration_seconds`), confirmed state (`lookout_up`), 24h
+  uptime, and outbox health (`lookout_undelivered_alert_age_seconds`).
+
+DNS and domain checks, certificate expiry, and long-term JSONL history are
+not in this release.
 
 ## Tests
 
