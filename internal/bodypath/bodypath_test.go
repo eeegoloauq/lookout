@@ -85,7 +85,11 @@ func TestPrefixes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{".result", ".result.source"}
-	if got := p.Prefixes(); !reflect.DeepEqual(got, want) {
+	var got []string
+	for _, prefix := range p.Prefixes() {
+		got = append(got, prefix.String())
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Prefixes() = %v, want %v", got, want)
 	}
 	single, _ := Parse(".a")

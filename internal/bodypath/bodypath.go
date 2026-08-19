@@ -106,16 +106,16 @@ func (p Path) Lookup(v any) (any, bool) {
 // Prefixes returns the intermediate paths, shortest first, excluding the full
 // path itself. It lets a caller report the deepest part of a path that did
 // resolve, which is the useful half of a "field is missing" message.
-func (p Path) Prefixes() []string {
-	var out []string
+func (p Path) Prefixes() []Path {
+	var out []Path
 	var b strings.Builder
-	for _, seg := range p.segments[:max(len(p.segments)-1, 0)] {
+	for i, seg := range p.segments[:max(len(p.segments)-1, 0)] {
 		if seg.isIdx {
 			fmt.Fprintf(&b, "[%d]", seg.index)
 		} else {
 			b.WriteString("." + seg.field)
 		}
-		out = append(out, b.String())
+		out = append(out, Path{raw: b.String(), segments: p.segments[:i+1]})
 	}
 	return out
 }
