@@ -1,8 +1,9 @@
 # lookout
 
-A small uptime monitor for a homelab: HTTP checks now, DNS, TLS and domain
-expiry to follow. One static binary, no runtime dependencies, no database, a
-declarative YAML config.
+A small uptime monitor for a homelab: HTTP, DNS and domain-registration
+checks, TLS and registry expiry from the work already being done. One
+static binary, no runtime dependencies, no database, a declarative YAML
+config.
 
 Its founding rule: **silence means everything is fine, and silence must never
 be a bug.** Alerting is on for every check unless the check says
@@ -10,9 +11,9 @@ be a bug.** Alerting is on for every check unless the check says
 one.
 
 Status: early development. `SPEC.md` is the design (in Russian); this release
-covers the check model, the HTTP probe, the threshold and instability state
-machine, durable state, the recent-history ring, Telegram alert delivery, and
-the status page / API / metrics.
+covers the check model, HTTP/DNS/domain probes, the threshold and instability
+state machine, durable state, the recent-history ring, Telegram alert delivery,
+and the status page / API / metrics.
 
 ## Build
 
@@ -75,10 +76,22 @@ validation error rather than a silently empty header.
   a monitor that cannot notify must look sick from the outside.
 - **Prometheus metrics** for the last probe (`lookout_probe_success`,
   `lookout_probe_duration_seconds`), confirmed state (`lookout_up`), 24h
-  uptime, and outbox health (`lookout_undelivered_alert_age_seconds`).
+  uptime, certificate and domain days left, and outbox health
+  (`lookout_undelivered_alert_age_seconds`).
+- **DNS checks** (`type: dns`) for A/AAAA/MX/NS/TXT against a resolver.
+  UDP queries are retried: one lost datagram is not an outage. A change
+  in the answer snapshot is zone drift; the first probe is a baseline,
+  not an alert.
+- **TLS certificate expiry** from the HTTPS handshake of an `http` check.
+  No extra request, no extra check type. Tiers 21/14/7/3 days, then daily;
+  each threshold fires once until the cert is renewed.
+- **Domain registration expiry** (`type: domain`): RDAP at the registry
+  listed in IANA's bootstrap, WHOIS on TCP/43 otherwise (including `.ru`
+  at whois.tcinet.ru, field `paid-till`). A silent registry is `unknown`,
+  not down; that becomes an alert only after three days. Tiers 60/30/14/7
+  days, then daily.
 
-DNS and domain checks, certificate expiry, and long-term JSONL history are
-not in this release.
+Long-term JSONL history and mute windows are not in this release.
 
 ## Tests
 
