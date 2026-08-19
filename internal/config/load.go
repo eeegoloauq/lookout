@@ -25,6 +25,7 @@ import (
 // line it came from.
 type fileConfig struct {
 	Listen   *string       `yaml:"listen"`
+	Timezone *string       `yaml:"timezone"`
 	State    *fileState    `yaml:"state"`
 	Defaults *fileDefaults `yaml:"defaults"`
 	Alerting *fileAlerting `yaml:"alerting"`
@@ -173,11 +174,24 @@ func structuralError(name string, errs ...error) error {
 func resolve(c *collector, raw *fileConfig) *Config {
 	cfg := &Config{
 		Listen:    DefaultListen,
+		Location:  time.Local,
+		TZName:    time.Local.String(),
 		StateFile: DefaultStateFile,
 		Alerting:  Alerting{Mode: ModeTelegram, BatchWindow: DefaultBatchWindow, Reminders: DefaultReminders()},
 	}
 	if raw.Listen != nil {
 		cfg.Listen = resolveListen(c, *raw.Listen)
+	}
+	if raw.Timezone != nil {
+		name := strings.TrimSpace(*raw.Timezone)
+		if name == "" {
+			c.addf("timezone", "timezone is empty")
+		} else if loc, err := loadTZ(name); err != nil {
+			c.addf("timezone", "unknown timezone %q: %v", name, err)
+		} else {
+			cfg.Location = loc
+			cfg.TZName = name
+		}
 	}
 	if raw.State != nil && raw.State.File != nil {
 		if v, ok := expand(c, "state.file", *raw.State.File); ok {

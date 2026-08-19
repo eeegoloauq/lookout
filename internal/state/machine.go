@@ -281,6 +281,7 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 			if wasDown {
 				event.Kind = EventUp
 				event.Downtime = r.At.Sub(e.IncidentStart)
+				e.recordIncident(r.At)
 				events = append(events, event)
 				// The incident has been reported; the failures that made it up must
 				// not be reported a second time as instability.
@@ -307,7 +308,7 @@ func (m *Machine) Observe(c config.Check, r check.Result) []Event {
 	events = append(events, e.observeDomain(c, event)...)
 	events = append(events, e.observeDelegation(c, event)...)
 
-	if e.CheckState != before {
+	if !e.CheckState.sameAs(before) {
 		m.dirty = true
 		m.updated = r.At
 	}
@@ -511,6 +512,20 @@ func (e *entry) failuresInWindow(window int) int {
 		mask = ^uint64(0)
 	}
 	return bits.OnesCount64(e.recent & mask)
+}
+
+// recordIncident closes the current outage and files it, newest first. The
+// reason kept is the last failure seen during the outage, which is what the
+// operator will be looking for when they ask what happened at 03:40.
+func (e *entry) recordIncident(end time.Time) {
+	if e.IncidentStart.IsZero() {
+		return
+	}
+	inc := Incident{Start: e.IncidentStart, End: end, Reason: e.LastFailureReason}
+	e.Incidents = append([]Incident{inc}, e.Incidents...)
+	if len(e.Incidents) > MaxIncidents {
+		e.Incidents = e.Incidents[:MaxIncidents]
+	}
 }
 
 // failureReason is the short, secret-free explanation kept on the check for

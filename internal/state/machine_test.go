@@ -340,3 +340,47 @@ func TestReminderNeedsAReportedOutage(t *testing.T) {
 		}
 	}
 }
+
+// Counting incidents per day answers "how often"; only a log answers "what
+// happened at 03:40 last night", which is the question actually asked.
+func TestIncidentLogRecordsClosedOutages(t *testing.T) {
+	c := testCheck()
+	m := NewMachine()
+	at := epoch
+	for i := range MaxIncidents + 3 {
+		start := at.Add(time.Duration(i) * 2 * time.Hour)
+		feedFrom(m, c, "UUDDDUU", start)
+	}
+	st, ok := m.State(c.Name)
+	if !ok {
+		t.Fatal("no state")
+	}
+	if len(st.Incidents) != MaxIncidents {
+		t.Fatalf("kept %d incidents, want the cap of %d", len(st.Incidents), MaxIncidents)
+	}
+	newest := st.Incidents[0]
+	if !newest.Start.After(st.Incidents[1].Start) {
+		t.Error("the log is supposed to be newest first")
+	}
+	if newest.Duration() <= 0 {
+		t.Errorf("incident has no duration: %+v", newest)
+	}
+	if newest.Reason == "" {
+		t.Errorf("incident kept no reason: %+v", newest)
+	}
+}
+
+// An outage that is still open is not in the log yet: it is the current
+// incident, and closing it is what files it.
+func TestOpenIncidentIsNotLoggedYet(t *testing.T) {
+	c := testCheck()
+	m := NewMachine()
+	feed(m, c, "UUDDD")
+	st, _ := m.State(c.Name)
+	if len(st.Incidents) != 0 {
+		t.Fatalf("an open outage was filed as history: %+v", st.Incidents)
+	}
+	if st.IncidentStart.IsZero() {
+		t.Error("the open incident lost its start")
+	}
+}

@@ -36,7 +36,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if got.Version != SnapshotVersion || !got.UpdatedAt.Equal(epoch) {
 		t.Errorf("header = %+v", got)
 	}
-	if got.Checks["Example"] != snap.Checks["Example"] {
+	if !got.Checks["Example"].sameAs(snap.Checks["Example"]) {
 		t.Errorf("state = %+v, want %+v", got.Checks["Example"], snap.Checks["Example"])
 	}
 }

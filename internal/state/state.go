@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 )
 
@@ -54,6 +55,11 @@ type CheckState struct {
 	LastFailureAt     time.Time `json:"last_failure_at,omitzero"`
 	LastFailureReason string    `json:"last_failure_reason,omitempty"`
 
+	// Incidents is the log of closed outages, newest first and capped at
+	// MaxIncidents. Counting incidents per day answers "how often"; only
+	// a log answers "what happened at 03:40 last night".
+	Incidents []Incident `json:"incidents,omitempty"`
+
 	// DownNoticeAt is when the operator was last told about the current
 	// incident — the DOWN alert or the latest reminder — and DownReminders
 	// how many reminders it has already produced. Both are durable for the
@@ -93,6 +99,34 @@ type CheckState struct {
 	DomainDelegated         bool `json:"domain_delegated,omitempty"`
 	DomainDelegationKnown   bool `json:"domain_delegation_known,omitempty"`
 	DomainUndelegatedNotice bool `json:"domain_undelegated_notice,omitempty"`
+}
+
+// MaxIncidents is how many closed outages are kept per check. Ten covers
+// "has this been happening all week"; a full ledger belongs in the JSONL
+// history, not in the file that is rewritten on every state change.
+const MaxIncidents = 10
+
+// Incident is one closed outage.
+type Incident struct {
+	Start  time.Time `json:"start"`
+	End    time.Time `json:"end"`
+	Reason string    `json:"reason,omitempty"`
+}
+
+// Duration is how long the outage lasted.
+func (i Incident) Duration() time.Duration {
+	if i.Start.IsZero() || i.End.Before(i.Start) {
+		return 0
+	}
+	return i.End.Sub(i.Start)
+}
+
+// sameAs reports whether two states are identical. A plain == stopped
+// compiling when the incident log arrived (a struct holding a slice is not
+// comparable); this runs once per probe on a small struct, which is nothing
+// next to the probe itself.
+func (cs CheckState) sameAs(other CheckState) bool {
+	return reflect.DeepEqual(cs, other)
 }
 
 // Snapshot is the whole durable state, as written to disk.

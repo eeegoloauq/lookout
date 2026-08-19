@@ -579,3 +579,18 @@ checks:
 		t.Errorf("state=%q history=%q", cfg.StateFile, cfg.HistoryFile)
 	}
 }
+
+// Clocks on the status page are for a person; the timezone is theirs to
+// choose, and an unknown one is a config error rather than a silent UTC.
+func TestTimezoneOverride(t *testing.T) {
+	cfg := mustLoad(t, "timezone: Europe/Moscow\n"+minimal)
+	if cfg.TZName != "Europe/Moscow" || cfg.Location == nil {
+		t.Fatalf("timezone = %q / %v", cfg.TZName, cfg.Location)
+	}
+	if _, offset := time.Date(2026, 8, 19, 12, 0, 0, 0, cfg.Location).Zone(); offset != 3*60*60 {
+		t.Errorf("offset = %ds, want Moscow's +3h", offset)
+	}
+	if _, err := Load("config.yaml", []byte("timezone: Mars/Olympus\n"+minimal)); err == nil {
+		t.Error("an unknown timezone must not load")
+	}
+}

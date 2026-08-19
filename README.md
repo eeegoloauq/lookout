@@ -78,8 +78,9 @@ validation error rather than a silently empty header.
 - **A status page** that is a board, not a dashboard: groups as headings, one
   line per check, and every line opens into what it watches, why it last
   failed, uptime over 24h/7d/30d, median/p95/worst response time and a
-  24-hour bar. No JavaScript and no external asset; it reloads itself once a
-  minute.
+  24-hour bar, plus the log of the last ten outages with what each one said.
+  Clocks follow `timezone:` (the API stays UTC). No JavaScript and no
+  external asset; it reloads itself once a minute.
 - **A JSON API** on loopback by default. `/api/status` is
   versioned in the body (`version: 1`) so a separate start page can consume
   it. `/healthz` is 503 when the alert outbox has failed several deliveries:

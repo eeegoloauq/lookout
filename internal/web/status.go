@@ -32,12 +32,16 @@ type MuteView struct {
 
 // CheckStatus is one check as a foreign consumer should see it.
 type CheckStatus struct {
-	Name     string `json:"name"`
-	Group    string `json:"group,omitempty"`
-	Type     string `json:"type"`
-	URL      string `json:"url,omitempty"`
-	Status   string `json:"status"`
-	Unstable bool   `json:"unstable"`
+	Name  string `json:"name"`
+	Group string `json:"group,omitempty"`
+	Type  string `json:"type"`
+	URL   string `json:"url,omitempty"`
+	// Host and QueryType describe a dns or domain check, which has no URL:
+	// without them the page could not say what it is watching.
+	Host      string `json:"host,omitempty"`
+	QueryType string `json:"query_type,omitempty"`
+	Status    string `json:"status"`
+	Unstable  bool   `json:"unstable"`
 
 	// LastProbe is null until the first result lands. A restart starts
 	// from empty history, which must read as "no data", not as failure.
@@ -76,6 +80,9 @@ type CheckStatus struct {
 	// LastFailure is the most recent failing probe and why, even after
 	// the check recovered. Null until something has failed once.
 	LastFailure *FailureView `json:"last_failure"`
+	// Incidents is the closed-outage log, newest first: when it broke,
+	// how long it stayed broken and what it said while it was.
+	Incidents []IncidentLogView `json:"incidents,omitempty"`
 
 	// Uptime7d / Uptime30d come from the JSONL history plus today.
 	// Null when there are no samples, never 100% by omission.
@@ -109,6 +116,14 @@ type LatencyView struct {
 type FailureView struct {
 	At     time.Time `json:"at"`
 	Reason string    `json:"reason,omitempty"`
+}
+
+// IncidentLogView is one closed outage.
+type IncidentLogView struct {
+	StartedAt  time.Time `json:"started_at"`
+	EndedAt    time.Time `json:"ended_at"`
+	DurationMS int64     `json:"duration_ms"`
+	Reason     string    `json:"reason,omitempty"`
 }
 
 // IncidentView is the current confirmed outage, if any.
@@ -222,12 +237,14 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 		status = state.StatusUnknown
 	}
 	out := CheckStatus{
-		Name:     c.Name,
-		Group:    c.Group,
-		Type:     string(c.Type),
-		URL:      check.MaskURL(c.URL),
-		Status:   string(status),
-		Unstable: cs.Unstable,
+		Name:      c.Name,
+		Group:     c.Group,
+		Type:      string(c.Type),
+		URL:       check.MaskURL(c.URL),
+		Host:      c.Host,
+		QueryType: string(c.QueryType),
+		Status:    string(status),
+		Unstable:  cs.Unstable,
 	}
 	if ring, ok := s.mon.History().Ring(c.Name); ok {
 		if last, ok := ring.Last(); ok {
@@ -245,6 +262,14 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 		if lat := latency(ring.Points()); lat != nil {
 			out.Latency24h = lat
 		}
+	}
+	for _, inc := range cs.Incidents {
+		out.Incidents = append(out.Incidents, IncidentLogView{
+			StartedAt:  inc.Start.UTC(),
+			EndedAt:    inc.End.UTC(),
+			DurationMS: inc.Duration().Milliseconds(),
+			Reason:     inc.Reason,
+		})
 	}
 	if !cs.LastFailureAt.IsZero() {
 		out.LastFailure = &FailureView{At: cs.LastFailureAt.UTC(), Reason: cs.LastFailureReason}

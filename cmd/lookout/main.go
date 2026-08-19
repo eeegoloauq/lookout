@@ -15,11 +15,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"runtime/debug"
 	"sort"
 	"strings"
 	"syscall"
+	// The timezone database is embedded so that `timezone:` works on a
+	// host without tzdata installed, which is most minimal containers.
 	"time"
+	_ "time/tzdata"
 
 	"github.com/eeegoloauq/lookout/internal/alert"
 	"github.com/eeegoloauq/lookout/internal/config"
@@ -349,26 +353,53 @@ func plural(n int, word string) string {
 	return fmt.Sprintf("%d %ss", n, word)
 }
 
+// version identifies the build the way someone asking "is this the one I
+// deployed" needs it: a released tag when there is one, otherwise the short
+// commit and the day it was built. A bare twelve-character hash answers
+// neither question on its own.
+// pseudoVersion matches Go's synthesised module versions.
+var pseudoVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[\w.]+)?-\d{14}-[0-9a-f]{12}`)
+
 func version() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "unknown"
 	}
-	rev, modified := "", false
+	rev, when, modified := "", "", false
 	for _, s := range info.Settings {
 		switch s.Key {
 		case "vcs.revision":
 			rev = s.Value
+		case "vcs.time":
+			if t, err := time.Parse(time.RFC3339, s.Value); err == nil {
+				when = t.UTC().Format("2 Jan 2006")
+			}
 		case "vcs.modified":
 			modified = s.Value == "true"
 		}
 	}
-	switch {
-	case rev == "":
-		return "devel"
-	case modified:
-		return rev[:min(len(rev), 12)] + "-dirty"
-	default:
-		return rev[:min(len(rev), 12)]
+	tag := info.Main.Version
+	// A module built outside a release gets a pseudo-version
+	// (v0.0.0-20260819171115-0ca1f7e8d4d0): that is the commit again, in a
+	// longer costume, and it is not what anyone means by a version.
+	if tag == "(devel)" || pseudoVersion.MatchString(tag) {
+		tag = ""
 	}
+	switch {
+	case rev == "" && tag == "":
+		return "devel"
+	case rev == "":
+		return tag
+	}
+	out := rev[:min(len(rev), 7)]
+	if tag != "" {
+		out = tag + " (" + out + ")"
+	}
+	if when != "" {
+		out += " · " + when
+	}
+	if modified {
+		out += " · uncommitted changes"
+	}
+	return out
 }

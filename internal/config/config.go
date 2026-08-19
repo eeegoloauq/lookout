@@ -97,7 +97,13 @@ var QueryTypes = []QueryType{QueryA, QueryAAAA, QueryMX, QueryNS, QueryTXT}
 
 // Config is a validated configuration.
 type Config struct {
-	Listen      string
+	Listen string
+	// Location is the timezone the status page renders clocks in. Logs and
+	// the JSON API stay UTC: a machine-readable timestamp with a local
+	// offset is how two systems end up disagreeing about an outage.
+	Location *time.Location
+	// TZName is Location as written in the config, for display.
+	TZName      string
 	StateFile   string
 	HistoryFile string
 	Alerting    Alerting

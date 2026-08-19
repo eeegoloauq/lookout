@@ -14,7 +14,7 @@
 <header>
   <h1>lookout</h1>
   <p class="tally">{{.Tally}}</p>
-  <p class="when">{{.When}}</p>
+  <p class="when">{{.When}}{{if .Zone}} {{.Zone}}{{end}}</p>
 </header>
 {{if .Degraded}}
 <p class="banner" role="status">Lookout cannot notify: {{.Degraded}}</p>
@@ -24,6 +24,15 @@
 {{end}}
 {{if .Empty}}
 <p class="empty">No checks configured.</p>
+{{else}}
+<div class="cols">
+  <span></span>
+  <span>check</span>
+  <span></span>
+  <span>last</span>
+  <span>uptime</span>
+  <span>checked</span>
+</div>
 {{end}}
 {{range .Groups}}
 <section class="group">
@@ -44,7 +53,14 @@
       <div class="axis"><span>24h ago</span><span>now</span></div>
       {{end}}
       <dl>
+        {{if .Link}}<dt>watching</dt><dd><a href="{{.Link}}" rel="noreferrer noopener" target="_blank">{{.Link}}</a></dd>{{end}}
         {{range .Facts}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
+        {{if .Incidents}}
+        <dt>outages</dt>
+        <dd>
+          {{range .Incidents}}<span class="inc">{{.When}} · {{.For}}{{if .Reason}} · {{.Reason}}{{end}}</span>{{end}}
+        </dd>
+        {{end}}
       </dl>
     </div>
   </details>
@@ -52,7 +68,7 @@
 </section>
 {{end}}
 <footer>
-  <span>lookout {{.Version}}</span>
+  <span>lookout · build {{.Version}}</span>
   <a href="/api/status">status json</a>
   <a href="/metrics">metrics</a>
 </footer>

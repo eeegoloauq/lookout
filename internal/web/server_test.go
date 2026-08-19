@@ -542,12 +542,14 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 			t.Errorf("page missing %q", want)
 		}
 	}
-	// The page must fetch nothing and run nothing. A check's own target URL
-	// is content and may appear; an element that loads it must not.
+	// The page must fetch nothing and run nothing on its own. A link to a
+	// check's own target is content — following it is the reader's choice —
+	// but nothing may load from elsewhere without being asked.
 	for _, forbidden := range []string{
 		"<script",
 		"<img",
 		"<iframe",
+		"<link",
 		"src=",
 		"@import",
 		"url(",
@@ -555,8 +557,6 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 		"fonts.googleapis",
 		"fonts.gstatic",
 		"font-awesome",
-		`href="http`,
-		`href='http`,
 	} {
 		if strings.Contains(strings.ToLower(body), forbidden) {
 			t.Errorf("page must not pull %q (no JS, no external assets)", forbidden)
@@ -806,4 +806,77 @@ func TestLastFailureSurvivesRecovery(t *testing.T) {
 		return
 	}
 	t.Fatal("Photos missing from the status document")
+}
+
+// Three right-hand columns of bare numbers need saying what they are once.
+func TestPageLabelsItsColumns(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test"), "/").Body.String()
+	for _, want := range []string{`class="cols"`, ">check<", ">uptime<", ">checked<"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("column header missing %q", want)
+		}
+	}
+}
+
+// The target of a check is the first thing anyone opens when its row goes
+// red; retyping it from a status page is silly.
+func TestPageLinksTheTarget(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test"), "/").Body.String()
+	if !strings.Contains(body, `<a href="http://photos.invalid/ping" rel="noreferrer noopener"`) {
+		t.Errorf("target is not a link:\n%s", body)
+	}
+}
+
+func TestPageShowsTheOutageLog(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UUDDDUU", time.Now().Add(-3*time.Hour), 20*time.Millisecond, 503)
+	body := get(t, New(m, "test"), "/").Body.String()
+	if !strings.Contains(body, ">outages<") {
+		t.Errorf("no outage log on the page:\n%s", body)
+	}
+	if !strings.Contains(body, "HTTP 503") {
+		t.Errorf("the logged outage lost its reason:\n%s", body)
+	}
+}
+
+// Machine-readable output stays UTC; the board shows the time on the wall
+// of whoever is reading it, and says which wall that is.
+func TestPageClockFollowsTheConfiguredZone(t *testing.T) {
+	m := testMonitor(t, "timezone: Europe/Moscow\n"+twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test"), "/").Body.String()
+	if !strings.Contains(body, "MSK") {
+		t.Errorf("page does not name the zone it is showing:\n%s", body)
+	}
+	var doc StatusDocument
+	if err := json.Unmarshal(get(t, New(m, "test"), "/api/status").Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if doc.GeneratedAt.Location() != time.UTC {
+		t.Errorf("the API drifted off UTC: %s", doc.GeneratedAt)
+	}
+}
+
+// The newest half hour is the one someone is staring at. Anchoring the bar
+// at a truncated start pushed it past the end of the array, so the failure
+// that just happened was the single thing the bar did not draw.
+func TestTimelineShowsTheNewestFailure(t *testing.T) {
+	now := time.Now()
+	var points []history.Point
+	for i := 1440; i > 0; i-- {
+		at := now.Add(-time.Duration(i) * time.Minute)
+		outcome := check.OutcomeUp
+		if i <= 5 {
+			outcome = check.OutcomeDown
+		}
+		points = append(points, history.Point{At: at, Outcome: outcome, Duration: 10 * time.Millisecond})
+	}
+	buckets := timeline(points, now)
+	if last := buckets[len(buckets)-1]; last.Class != "b" && last.Class != "p" {
+		t.Errorf("the last slot is %q, but the last five minutes failed", last.Class)
+	}
 }
