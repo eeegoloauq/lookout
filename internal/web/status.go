@@ -40,8 +40,12 @@ type CheckStatus struct {
 	// without them the page could not say what it is watching.
 	Host      string `json:"host,omitempty"`
 	QueryType string `json:"query_type,omitempty"`
-	Status    string `json:"status"`
-	Unstable  bool   `json:"unstable"`
+	Resolver  string `json:"resolver,omitempty"`
+	// IntervalMS is how often the check runs. A consumer needs it to know
+	// whether "no sample in the last hour" is a gap or the schedule.
+	IntervalMS int64  `json:"interval_ms,omitempty"`
+	Status     string `json:"status"`
+	Unstable   bool   `json:"unstable"`
 
 	// LastProbe is null until the first result lands. A restart starts
 	// from empty history, which must read as "no data", not as failure.
@@ -237,14 +241,16 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 		status = state.StatusUnknown
 	}
 	out := CheckStatus{
-		Name:      c.Name,
-		Group:     c.Group,
-		Type:      string(c.Type),
-		URL:       check.MaskURL(c.URL),
-		Host:      c.Host,
-		QueryType: string(c.QueryType),
-		Status:    string(status),
-		Unstable:  cs.Unstable,
+		Name:       c.Name,
+		Group:      c.Group,
+		Type:       string(c.Type),
+		URL:        check.MaskURL(c.URL),
+		Host:       c.Host,
+		QueryType:  string(c.QueryType),
+		Resolver:   c.Resolver,
+		IntervalMS: c.Interval.Milliseconds(),
+		Status:     string(status),
+		Unstable:   cs.Unstable,
 	}
 	if ring, ok := s.mon.History().Ring(c.Name); ok {
 		if last, ok := ring.Last(); ok {

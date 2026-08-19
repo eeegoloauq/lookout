@@ -172,6 +172,17 @@ summary:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 }
 
 .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+
+/* A registration has no response time and no daily uptime; it has a date.
+   The two numeric columns become one sentence rather than two columns of
+   numbers that would mean something else than their headings say. */
+.wide {
+  grid-column: 3 / span 3;
+  white-space: nowrap;
+}
+
+.wide.soon { color: var(--flap); }
+.wide.bad { color: var(--down); font-weight: 650; }
 .note { color: var(--mute); font-size: 0.85rem; }
 .num { text-align: right; color: var(--mute); font-size: 0.9rem; }
 .ago { color: var(--mute); }
@@ -272,6 +283,10 @@ footer a { color: var(--mute); }
      was last checked. The single last latency reading is the first thing
      to go — the 24h figure says more in the same space. */
   .note, .lat { display: none; }
+  /* On a phone the expiry gets both remaining columns: for a check that
+     runs once a day, "8h ago" is the schedule, not news. */
+  .wide { grid-column: 3 / span 2; white-space: normal; }
+  .wide ~ .ago { display: none; }
   .cols {
     grid-template-columns: 4.6rem minmax(5rem, 1fr) 4.2rem 5rem;
     gap: 0 0.5rem;

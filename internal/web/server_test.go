@@ -363,10 +363,10 @@ checks:
 		t.Errorf("metrics missing domain gauge:\n%s", body)
 	}
 
-	// Expiry lives in the row's detail panel, spelled out rather than
-	// abbreviated into a column that is empty on most checks.
+	// A certificate expiry lives in the HTTP row's detail panel, spelled
+	// out; a registration is the domain row's headline number.
 	page := get(t, h, "/").Body.String()
-	if !strings.Contains(page, "certificate in ") || !strings.Contains(page, "registration in ") {
+	if !strings.Contains(page, "certificate in ") || !strings.Contains(page, "expires 44 days") {
 		t.Errorf("status page missing expiry:\n%s", page)
 	}
 }
@@ -878,5 +878,92 @@ func TestTimelineShowsTheNewestFailure(t *testing.T) {
 	buckets := timeline(points, now)
 	if last := buckets[len(buckets)-1]; last.Class != "b" && last.Class != "p" {
 		t.Errorf("the last slot is %q, but the last five minutes failed", last.Class)
+	}
+}
+
+// A registration is not "up 99.9% of the day with a 48ms response": it is a
+// name that runs out on a date. Showing it in the same columns as an HTTP
+// check is what made a domain row look like a duplicate of the site row.
+func TestDomainRowShowsExpiryInsteadOfLatency(t *testing.T) {
+	const src = `
+checks:
+  - name: Website
+    group: Public Sites
+    type: http
+    url: https://site.invalid
+  - name: site.invalid
+    group: Domains
+    type: domain
+    domain: site.invalid
+    interval: 24h
+    success_threshold: 1
+`
+	m := testMonitor(t, src)
+	now := time.Now()
+	var c config.Check
+	for _, ch := range m.Config().Checks {
+		if ch.Type == config.TypeDomain {
+			c = ch
+		}
+	}
+	res := check.Result{
+		Name: c.Name, At: now, Outcome: check.OutcomeUp, Duration: 180 * time.Millisecond,
+		DomainExpiresAt: now.Add(11*24*time.Hour + time.Hour), DomainState: "REGISTERED, DELEGATED", DomainSource: "rdap",
+	}
+	m.Machine().Observe(c, res)
+	m.History().Record(res)
+
+	body := get(t, New(m, "test"), "/").Body.String()
+	if !strings.Contains(body, "expires 11 days") {
+		t.Errorf("domain row does not lead with the expiry:\n%s", body)
+	}
+	if !strings.Contains(body, `<a href="https://site.invalid"`) {
+		t.Errorf("domain row has no link to the name it watches:\n%s", body)
+	}
+	if !strings.Contains(body, "REGISTERED, DELEGATED (rdap)") {
+		t.Errorf("domain row lost the registry state:\n%s", body)
+	}
+	// One sample a day cannot fill a bar of half-hour slots; drawing 47
+	// empty ones would only suggest an outage that never happened.
+	rows := strings.Split(body, "<details")
+	for _, row := range rows {
+		if strings.Contains(row, `class="nm">site.invalid<`) && strings.Contains(row, `class="bar"`) {
+			t.Error("a daily check should not get a 24-hour bar")
+		}
+	}
+}
+
+// Every slot carries its numbers, not only the failing ones: "was it slow
+// at four in the morning" is a question about the green part of the bar.
+func TestTimelineSlotsCarryTheirNumbers(t *testing.T) {
+	now := time.Now()
+	var points []history.Point
+	for i := 60; i > 0; i-- {
+		points = append(points, history.Point{
+			At: now.Add(-time.Duration(i) * time.Minute), Outcome: check.OutcomeUp,
+			Duration: 62 * time.Millisecond,
+		})
+	}
+	buckets := timeline(points, now)
+	last := buckets[len(buckets)-1]
+	if !strings.Contains(last.Title, "ok") || !strings.Contains(last.Title, "62ms typical") {
+		t.Errorf("healthy slot has no tooltip: %q", last.Title)
+	}
+}
+
+// A registration with three days left is not an outage, but leaving it
+// plain green until the day it dies is how a domain gets lost.
+func TestExpiryUrgencyColoursTheDate(t *testing.T) {
+	for _, tc := range []struct {
+		days int
+		want string
+	}{{60, ""}, {14, "soon"}, {4, "soon"}, {3, "bad"}, {-1, "bad"}} {
+		d := tc.days
+		if got := expiryUrgency(&d); got != tc.want {
+			t.Errorf("%d days left = %q, want %q", tc.days, got, tc.want)
+		}
+	}
+	if expiryUrgency(nil) != "" {
+		t.Error("an unknown expiry must not be coloured")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,14 +51,19 @@ type pageGroup struct {
 }
 
 type pageRow struct {
-	Name      string
-	Link      string
-	Label     string
-	RowClass  string
-	Note      string // what the status line adds: "12m", "5 of 20 failed"
-	Checked   string
-	Latency   string
-	Uptime    string
+	Name     string
+	Link     string
+	Label    string
+	RowClass string
+	Note     string // what the status line adds: "12m", "5 of 20 failed"
+	Checked  string
+	Latency  string
+	Uptime   string
+	// Wide replaces the latency and uptime columns for a check where they
+	// mean nothing — a registration is not "up 100% of the day", it runs
+	// out on a date.
+	Wide      string
+	WideClass string
 	Muted     bool
 	Timeline  []pageBucket
 	Facts     []pageFact
@@ -119,10 +125,13 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			// in a column that is empty on every healthy row.
 			row.Note = "for " + formatSpan(time.Duration(c.Incident.DurationMS)*time.Millisecond)
 		}
-		if c.URL != "" && (strings.HasPrefix(c.URL, "http://") || strings.HasPrefix(c.URL, "https://")) {
+		switch {
+		case c.URL != "" && (strings.HasPrefix(c.URL, "http://") || strings.HasPrefix(c.URL, "https://")):
 			// The target is the first thing anyone wants to open when a
 			// row goes red; making them retype it is silly.
 			row.Link = c.URL
+		case c.Type == "domain" && c.Host != "":
+			row.Link = "https://" + c.Host
 		}
 		for _, inc := range c.Incidents {
 			row.Incidents = append(row.Incidents, pageIncident{
@@ -142,10 +151,16 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 		if c.Muted {
 			row.RowClass += " muted"
 		}
-		if ring, ok := s.mon.History().Ring(c.Name); ok {
+		// A bar of half-hour slots says nothing about a check that runs once
+		// a day: it would be forty-seven slots of "no data" and one tick.
+		if ring, ok := s.mon.History().Ring(c.Name); ok && !sparse(c) {
 			row.Timeline = timeline(ring.Points(), now.In(loc))
 		}
-		row.Facts = facts(c, now, loc)
+		if c.Type == "domain" {
+			row.Wide = registrationSummary(c, loc)
+			row.WideClass = expiryUrgency(c.DomainDaysLeft)
+		}
+		row.Facts = facts(c, now, loc, row.Link != "")
 
 		name := c.Group
 		if name == "" {
@@ -197,6 +212,51 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(buf.Bytes())
 }
 
+// sparse reports whether a check runs less often than one timeline slot, in
+// which case the 24-hour bar has nothing to draw.
+func sparse(c CheckStatus) bool {
+	slot := history.Retention / timelineBuckets
+	return c.IntervalMS > 0 && time.Duration(c.IntervalMS)*time.Millisecond >= slot
+}
+
+// registrationSummary is what a domain row shows instead of a response time
+// and a 24-hour uptime: neither says anything about a name that is either
+// registered until a date or not.
+func registrationSummary(c CheckStatus, loc *time.Location) string {
+	if c.DomainDaysLeft == nil {
+		if c.DomainLookupUnknown {
+			return "registry silent"
+		}
+		return "not looked up yet"
+	}
+	out := "expires " + formatDays(*c.DomainDaysLeft)
+	if c.DomainExpires != nil {
+		when := c.DomainExpires.In(loc)
+		// The year is only worth its width when it is not this one.
+		layout := "2 Jan"
+		if when.Year() != time.Now().In(loc).Year() {
+			layout = "2 Jan 2006"
+		}
+		out += " · " + when.Format(layout)
+	}
+	return out
+}
+
+// expiryUrgency colours the date on a row that is otherwise green: a
+// registration with three days left is not an outage, but calling it plain
+// "up" until the day it dies is how a domain gets lost.
+func expiryUrgency(days *int) string {
+	switch {
+	case days == nil:
+		return ""
+	case *days <= 3:
+		return "bad"
+	case *days <= 14:
+		return "soon"
+	}
+	return ""
+}
+
 // facts is the expanded panel: what the check watches, how it has behaved,
 // and what runs out. Absent data produces no line at all — an empty field
 // is a question the reader has to answer for themselves.
@@ -216,14 +276,16 @@ func zoneName(now time.Time, loc *time.Location) string {
 	return name
 }
 
-func facts(c CheckStatus, now time.Time, loc *time.Location) []pageFact {
+func facts(c CheckStatus, now time.Time, loc *time.Location, linked bool) []pageFact {
 	var out []pageFact
 	add := func(label, value string) {
 		if value != "" {
 			out = append(out, pageFact{Label: label, Value: value})
 		}
 	}
-	if c.URL == "" {
+	if !linked {
+		// When the target is a link the template prints it; printing it
+		// here as well is the same string twice.
 		add("watching", target(c))
 	}
 	if c.Incident != nil {
@@ -237,13 +299,25 @@ func facts(c CheckStatus, now time.Time, loc *time.Location) []pageFact {
 			add("last failure", when)
 		}
 	}
-	add("uptime", uptimeLine(c))
-	add("response", latencyLine(c.Latency24h))
-	if e := expiryLine(c, loc); e != "" {
+	if c.Type == "domain" {
+		// The uptime of a registry lookup is not the uptime of anything
+		// anyone cares about, and neither is how fast RDAP answered.
+		add("checked", "every "+formatSpan(time.Duration(c.IntervalMS)*time.Millisecond))
+	} else {
+		add("uptime", uptimeLine(c))
+		add("response", latencyLine(c.Latency24h))
+	}
+	// A domain row already leads with its expiry date; repeating it inside
+	// is noise. A certificate has no column of its own and belongs here.
+	if e := expiryLine(c, loc, c.Type != "domain"); e != "" {
 		add("expires", e)
 	}
 	if c.DomainState != "" {
-		add("registry", c.DomainState)
+		who := c.DomainState
+		if c.DomainSource != "" {
+			who += " (" + c.DomainSource + ")"
+		}
+		add("registry", who)
 	}
 	return out
 }
@@ -255,7 +329,11 @@ func target(c CheckStatus) string {
 	case c.URL != "":
 		return c.URL
 	case c.QueryType != "" && c.Host != "":
-		return c.QueryType + " " + c.Host
+		q := c.QueryType + " " + c.Host
+		if c.Resolver != "" {
+			q += " @" + c.Resolver
+		}
+		return q
 	case c.Host != "":
 		return c.Host
 	}
@@ -294,7 +372,7 @@ func latencyLine(l *LatencyView) string {
 	return fmt.Sprintf("usual %s · slowest 5%% %s · worst %s", p50, p95, worst)
 }
 
-func expiryLine(c CheckStatus, loc *time.Location) string {
+func expiryLine(c CheckStatus, loc *time.Location, withDomain bool) string {
 	var parts []string
 	if c.CertDaysLeft != nil {
 		s := "certificate in " + formatDays(*c.CertDaysLeft)
@@ -303,14 +381,14 @@ func expiryLine(c CheckStatus, loc *time.Location) string {
 		}
 		parts = append(parts, s)
 	}
-	if c.DomainDaysLeft != nil {
+	if c.DomainDaysLeft != nil && withDomain {
 		s := "registration in " + formatDays(*c.DomainDaysLeft)
 		if c.DomainExpires != nil {
 			s += " (" + c.DomainExpires.In(loc).Format("2 Jan 2006") + ")"
 		}
 		parts = append(parts, s)
 	}
-	if c.DomainLookupUnknown {
+	if c.DomainLookupUnknown && withDomain {
 		parts = append(parts, "registry has not answered")
 	}
 	return join(parts, " · ")
@@ -321,7 +399,10 @@ func expiryLine(c CheckStatus, loc *time.Location) string {
 // which is the whole reason to look at a bar instead of a number.
 func timeline(points []history.Point, now time.Time) []pageBucket {
 	slot := history.Retention / timelineBuckets
-	type acc struct{ ok, bad int }
+	type acc struct {
+		ok, bad int
+		ms      []int64
+	}
 	buckets := make([]acc, timelineBuckets)
 	for _, p := range points {
 		// Slots are counted back from now, not forward from a truncated
@@ -338,18 +419,30 @@ func timeline(points []history.Point, now time.Time) []pageBucket {
 		} else {
 			buckets[i].bad++
 		}
+		if p.Duration > 0 {
+			buckets[i].ms = append(buckets[i].ms, p.Duration.Milliseconds())
+		}
 	}
 	out := make([]pageBucket, timelineBuckets)
 	for i, b := range buckets {
 		from := now.Add(-time.Duration(timelineBuckets-i) * slot)
 		when := from.Format("15:04")
+		total := b.ok + b.bad
+		// Every slot carries its numbers, not only the failing ones: the
+		// question "was it slow at four in the morning" is asked of the
+		// green part of the bar too.
+		typical := ""
+		if len(b.ms) > 0 {
+			sort.Slice(b.ms, func(x, y int) bool { return b.ms[x] < b.ms[y] })
+			typical = " · " + formatLatency(time.Duration(percentile(b.ms, 50))*time.Millisecond) + " typical"
+		}
 		switch {
 		case b.bad > 0 && b.ok == 0:
-			out[i] = pageBucket{Class: "b", Title: fmt.Sprintf("%s · %d failed", when, b.bad)}
+			out[i] = pageBucket{Class: "b", Title: fmt.Sprintf("%s · all %d failed%s", when, b.bad, typical)}
 		case b.bad > 0:
-			out[i] = pageBucket{Class: "p", Title: fmt.Sprintf("%s · %d of %d failed", when, b.bad, b.ok+b.bad)}
+			out[i] = pageBucket{Class: "p", Title: fmt.Sprintf("%s · %d of %d failed%s", when, b.bad, total, typical)}
 		case b.ok > 0:
-			out[i] = pageBucket{Class: "o"}
+			out[i] = pageBucket{Class: "o", Title: fmt.Sprintf("%s · %d ok%s", when, b.ok, typical)}
 		default:
 			out[i] = pageBucket{Class: "n", Title: when + " · no data"}
 		}
