@@ -514,8 +514,13 @@ func (w *bufferWriter) WriteHeader(int)             {}
 // deployed" needs it: a released tag when there is one, otherwise the short
 // commit and the day it was built. A bare twelve-character hash answers
 // neither question on its own.
-// pseudoVersion matches Go's synthesised module versions.
-var pseudoVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[\w.]+)?-\d{14}-[0-9a-f]{12}`)
+// pseudoVersion matches Go's synthesised module versions by their tail, which
+// is the one part all three forms share: a timestamp and a commit prefix. The
+// head varies (v0.0.0-, v1.2.3-0., v1.2.3-pre.0.) and matching it was how the
+// commonest form slipped through and printed itself as a release. The
+// separator before the timestamp is a dot in two of the three forms, and Go
+// appends +dirty to a build made from a modified tree.
+var pseudoVersion = regexp.MustCompile(`[-.]\d{14}-[0-9a-f]{12}(\+dirty)?$`)
 
 func version() string {
 	info, ok := debug.ReadBuildInfo()

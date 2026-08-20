@@ -331,3 +331,24 @@ func TestTestAlertDoesNotTouchTheStateFile(t *testing.T) {
 		t.Fatalf("state file was written: %v", err)
 	}
 }
+
+// A pseudo-version is the commit again in a longer costume. Printing one where
+// a release number belongs tells a reader they are running something they are
+// not, so every shape Go synthesises has to be recognised.
+func TestPseudoVersionsAreNotMistakenForReleases(t *testing.T) {
+	for _, v := range []string{
+		"v0.0.0-20260820215511-f8380ee4d13c",
+		"v0.1.1-0.20260820215511-f8380ee4d13c",
+		"v0.1.1-rc.2.0.20260820215511-f8380ee4d13c",
+		"v0.1.1-0.20260820215511-f8380ee4d13c+dirty",
+	} {
+		if !pseudoVersion.MatchString(v) {
+			t.Errorf("%q was taken for a release", v)
+		}
+	}
+	for _, v := range []string{"v0.1.0", "v1.2.3-rc1", "v2.0.0+meta"} {
+		if pseudoVersion.MatchString(v) {
+			t.Errorf("%q was taken for a pseudo-version", v)
+		}
+	}
+}
