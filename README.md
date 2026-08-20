@@ -1,166 +1,140 @@
 # lookout
 
-A small uptime monitor for a homelab: HTTP, DNS and domain-registration
-checks, TLS and registry expiry from the work already being done. One
-static binary, no runtime dependencies, no database, a declarative YAML
-config.
+A small uptime monitor. It probes the things you list in a YAML file, keeps a
+day of history in memory and a year of it on disk, shows a page you can read at
+a glance, and sends a message when something breaks.
 
-Its founding rule: **silence means everything is fine, and silence must never
-be a bug.** Alerting is on for every check unless the check says
-`alert: false`, and no loss of state may turn into a false alert or a missing
-one.
+One static Go binary, two dependencies, no database, no agent, no container
+required. It fits on the smallest machine you own.
 
-Status: early development. `SPEC.md` is the design (in Russian); this release
-covers the check model, HTTP/DNS/domain probes, the threshold and instability
-state machine, durable state, the recent-history ring (seeded across restarts),
-Telegram alert delivery, the status page / API / metrics, mute windows,
-long-term JSONL history, and a hardened systemd unit.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/board-dark.png">
+  <img alt="The lookout status board" src="docs/board-light.png">
+</picture>
 
-## Build
+## Try it
+
+```sh
+go run github.com/eeegoloauq/lookout/cmd/lookout@latest demo
+```
+
+That serves the board above on `127.0.0.1:5665` filled with invented data.
+Nothing is probed and no configuration is read, so you can see what it looks
+like before deciding whether you want it.
+
+## Run it
 
 ```sh
 CGO_ENABLED=0 go build -o lookout ./cmd/lookout
+cp config.example.yaml config.yaml    # edit it
+./lookout validate config.yaml
+./lookout run config.yaml
 ```
 
-## Use
+`config.example.yaml` is the reference: every option is in it, with a comment
+saying what it is for. `validate` reports every problem at once, with the line
+each one is on, and `run` will not start on a config that does not pass.
+
+## What it checks
+
+**http** — status code, response time, a substring of the body, or a JSON path
+compared against a value. If a body path stops resolving, the check reports
+`malformed` rather than `down`, because an API that changed shape is not an
+outage and should not read like one.
+
+**tcp** — dials a `host:port` and hangs up without sending anything. This is
+the check for a database, a broker, an SSH daemon, or a container that exposes
+nothing but a port.
+
+**dns** — A, AAAA, MX, NS or TXT against a resolver you name. A lost UDP packet
+is retried rather than counted; a changed answer set is drift, and the first
+answer is a baseline rather than an alert.
+
+**TLS and domain expiry** come along for free. Certificate dates are read out of
+the handshake an `https` check already performs. Registration dates are worked
+out from the names your checks already point at — no second block of config —
+and looked up once a day over RDAP, or WHOIS where there is no RDAP.
+
+## When something breaks
+
+A check goes down after a few consecutive failures and comes back after a few
+consecutive successes; both counts are yours to set. There is a second detector
+for the service that alternates rather than fails, since a consecutive counter
+never notices that one.
+
+The message goes to Telegram. Everything that changed within a short window
+leaves as one message rather than fifteen, an outage that stays open repeats on
+a schedule you choose, and once a week lookout says it is still alive so that
+silence stays meaningful. Every event is written to a durable queue before
+anything tries to send it, and leaves that queue only once Telegram confirms it
+arrived.
+
+Quiet hours are a schedule in the config, or `lookout mute --for 2h --group
+Public` when you are about to break something on purpose. Probes keep running
+either way; only delivery stops, and what happened while you were away arrives
+as one summary when the mute lifts.
+
+## The page
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/detail-dark.png">
+  <img alt="A check expanded to show why it failed" src="docs/detail-light.png">
+</picture>
+
+Every row opens into what the check watches, when it broke, what it said, uptime
+over three windows, how the response time is spread, and a bar of the last
+24 hours. It is server-rendered HTML with no framework, no external font, no
+icon set and nothing loaded from a CDN, which is the point: a status page that
+goes blank when the network does is not a status page.
+
+Alongside it, `/api/status` is versioned JSON, `/metrics` is Prometheus text,
+and `/healthz` returns 503 when alerts are piling up undelivered — a monitor
+that cannot tell you anything should look broken from the outside.
+
+## Deploying
+
+`contrib/systemd/lookout.service` runs it as its own user with
+`ProtectSystem=strict` and an empty capability set. Secrets come from an
+environment file, never from the config:
 
 ```sh
-lookout validate config.yaml    # every problem, with the line it is on
-lookout run [-v] config.yaml    # probe and serve the status page until interrupted
-lookout test-alert config.yaml  # send one message through the notifier and exit
-lookout mute --for 30m --group Public
-lookout unmute
-```
-
-`lookout run` listens on `listen` in the config (default `127.0.0.1:5665`):
-
-- `GET /` — status page: one HTML list, no external assets and no framework;
-  rows open on a checkbox, and the one inline script exists only to skip the
-  minute reload while a row is open
-- `GET /api/status` — JSON of every check (versioned; this is the public contract)
-- `GET /api/checks/<name>` — recent probe history from the in-memory ring
-- `GET /metrics` — Prometheus text format
-- `GET /healthz` — process liveness; **degraded** (HTTP 503) if alert delivery is stuck
-
-Authorization headers from the config are never serialized. URLs that carry
-userinfo have the credentials masked.
-
-`config.example.yaml` documents the format. Secrets are never written in the
-config: `${VAR}` reads them from the environment, and an unset variable is a
-validation error rather than a silently empty header.
-
-## What it does today
-
-- **HTTP checks** with typed conditions: status (`200`, `"200-299"`, `"<500"`),
-  response time, a substring of the body, and JSON paths compared to expected
-  values. Conditions are compiled when the config loads, so a typo fails
-  validation instead of a probe.
-- **A separate `malformed` outcome** when a body path does not resolve: an API
-  that changed shape is not an outage and must not read like one.
-- **Thresholds** (`failure_threshold`, `success_threshold`) plus an
-  **"N of the last M" window**, because a single success resets a consecutive
-  counter — a check alternating up and down delivers half its requests and
-  would otherwise never alert at all.
-- **Durable state** in one atomically written JSON file, and 24 hours of recent
-  results per check in memory, seeded from a JSONL file so a restart does not
-  blank the 24-hour bar.
-- **A scheduler** that computes ticks from a fixed origin, offset by a hash of
-  the check name: no drift behind a slow target, no thundering herd, and the
-  same spread after every restart.
-- **Durable alert delivery** to Telegram. A state change is written to an
-  outbox in the state file before anyone tries to send it, and leaves the
-  queue only after the Bot API confirms delivery. Retries use exponential
-  backoff; a full queue collapses into a summary instead of dropping events.
-  Events that mature inside `batch_window` (default 45s) leave as one
-  message: one emoji for the worst of them, a counting headline, one line per
-  check. An outage that stays open repeats on an escalating schedule
-  (`reminders`, default 1h/4h/then daily). A configurable still-alive
-  ping (`alerting.heartbeat`, a duration; `0` or omitted means off) goes
-  through the same outbox, so a dead lookout is not mistaken for a quiet
-  one and a restart does not re-page. `lookout test-alert` sends one
-  line through the same credentials `run` uses and exits 0 only if the
-  Bot API confirms delivery; it does not touch the state file. The HTTP
-  client speaks SOCKS5 because `api.telegram.org` is often unreachable
-  directly. Token and chat id come from `LOOKOUT_TELEGRAM_TOKEN` and
-  `LOOKOUT_TELEGRAM_CHAT_ID` — never from the config file.
-
-- **A status page** that is a board, not a dashboard: groups as headings, one
-  line per check, and every line opens into what it watches, why it last
-  failed, uptime over 24h/7d/30d, median/p95/worst response time and a
-  24-hour bar, plus the log of the last ten outages with what each one said.
-  A row shows what its check actually measures: a registration has no
-  response time and no daily uptime, so it leads with the date it runs out,
-  coloured once that date is close. Declaring one `type: domain` check for a
-  name is all the wiring there is — every http and dns check that lives under
-  that name shows its expiry too, and warns on the row when it gets close.
-  Clocks follow `timezone:` (the API stays UTC). No JavaScript and no
-  external asset; it reloads itself once a minute.
-- **A JSON API** on loopback by default. `/api/status` is
-  versioned in the body (`version: 1`) so a separate start page can consume
-  it. `/healthz` is 503 when the alert outbox has failed several deliveries:
-  a monitor that cannot notify must look sick from the outside.
-- **Prometheus metrics** for the last probe (`lookout_probe_success`,
-  `lookout_probe_duration_seconds`), confirmed state (`lookout_up`), 24h
-  uptime, certificate and domain days left, and outbox health
-  (`lookout_undelivered_alert_age_seconds`).
-- **DNS checks** (`type: dns`) for A/AAAA/MX/NS/TXT against a resolver.
-  UDP queries are retried: one lost datagram is not an outage. A change
-  in the answer snapshot is zone drift; the first probe is a baseline,
-  not an alert.
-- **TLS certificate expiry** from the HTTPS handshake of an `http` check.
-  No extra request, no extra check type. Tiers 21/14/7/3 days, then daily;
-  each threshold fires once until the cert is renewed.
-- **Domain registration expiry** (`type: domain`): RDAP at the registry
-  listed in IANA's bootstrap, WHOIS on TCP/43 otherwise (including `.ru`
-  at whois.tcinet.ru, field `paid-till`). A silent registry is `unknown`,
-  not down; that becomes an alert only after three days. Tiers 60/30/14/7
-  days, then daily. Losing the `.ru` `DELEGATED` flag is its own event,
-  fired once per transition.
-- **Mute windows.** Static schedules in the config (`every` + `at` +
-  `duration`) and ad-hoc `lookout mute --for 30m --group Public`, which
-  talks to the running process over its HTTP listen address (loopback by
-  default). Probes and history keep running; only delivery is suppressed.
-  Events that fire while muted become one digest when the mute lifts —
-  they are not dropped. The mute is visible on the status page and in
-  `/api/status`, and it survives a restart.
-- **Long-term history** — one JSON Lines record per check per UTC day
-  (uptime, incidents, p50/p95). The in-progress day lives in the state
-  file so a restart neither duplicates nor loses it. The last 24 hours of
-  individual samples are a separate JSONL seed (`state.samples`, default
-  `samples.jsonl` beside the state file): it is replayed into the
-  in-memory ring on start, then the ring is the source of truth again.
-
-## Deploy
-
-The unit file is `contrib/systemd/lookout.service`. It runs as a dedicated
-`lookout` user with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`,
-`PrivateTmp`, `RestrictAddressFamilies`, and an empty `CapabilityBoundingSet`.
-Secrets come from an `EnvironmentFile` that you create with mode 0600.
-
-```sh
-CGO_ENABLED=0 go build -o lookout ./cmd/lookout
 install -o root -g root -m 0755 lookout /usr/bin/lookout
 useradd --system --home /var/lib/lookout --shell /usr/sbin/nologin lookout
 install -d -o lookout -g lookout -m 0750 /var/lib/lookout
-install -d -o root -g lookout -m 0750 /etc/lookout
-# config.yaml is yours — real hosts do not belong in this repository
+install -d -o root   -g lookout -m 0750 /etc/lookout
 install -o root -g lookout -m 0640 config.yaml /etc/lookout/config.yaml
 install -o root -g lookout -m 0600 contrib/lookout.env.example /etc/lookout/lookout.env
-# edit /etc/lookout/lookout.env (token, chat id) then:
-install -o root -g root -m 0644 contrib/systemd/lookout.service /etc/systemd/system/lookout.service
-systemctl daemon-reload
+install -o root -g root -m 0644 contrib/systemd/lookout.service /etc/systemd/system/
+# put the bot token and chat id in /etc/lookout/lookout.env, then
 systemctl enable --now lookout
 ```
 
-`state.file`, `state.history` and `state.samples` in the config should
-point at `/var/lib/lookout/` so `ProtectSystem=strict` still lets lookout write.
+Point `state.file` and its neighbours at `/var/lib/lookout/`, or
+`ProtectSystem=strict` will not let lookout write them.
 
-## Tests
+## Limits worth knowing
+
+Every probe leaves from the machine lookout runs on. If that machine is the one
+that is down, nobody is watching — an external monitor is a different job and
+lookout does not pretend to do it.
+
+Notifications go to Telegram and nowhere else. There is no web UI for adding a
+check; the config is in git, and a check that exists only inside a running
+process is one nobody can review or restore.
+
+The status page is a dense grid of numbers whose column headings are not
+programmatically tied to the cells, so a screen reader reads a row as a list of
+values without labels. The 24-hour bar carries a text summary for that reason;
+the table itself does not yet.
+
+## Contributing
+
+`docs/design.md` explains why the parts that look strange are the way they are —
+no database, no keep-alives, no third status. Read it before proposing a change
+to one of them.
 
 ```sh
 go vet ./... && go test -race ./...
 ```
 
-Everything clock-driven is tested inside a `testing/synctest` bubble on a fake
-clock, so schedules and cooldowns are exercised over simulated hours without a
-single sleep.
+MIT.
