@@ -169,15 +169,23 @@ h2 {
    that says "this opens" without becoming a second thing to aim at. */
 .summary:hover { background: var(--panel); }
 
-.summary::after {
+/* The mark hangs off the status word rather than being positioned in the
+   row, so it shares that word's baseline by construction. Absolutely
+   positioned, it sat on the top of the row instead, which put it at a
+   different height on every row whose tallest cell differed. The fixed
+   width keeps the word from shifting when the row opens. */
+.st::before {
   content: "\203A";
-  position: absolute;
-  left: 0.4rem;
+  display: inline-block;
+  width: 0.45rem;
+  margin-left: -0.75rem;
+  margin-right: 0.3rem;
   color: var(--mute);
-  opacity: 0.55;
+  opacity: 0.6;
+  font-weight: 400;
 }
 
-.toggle:checked ~ .summary::after { content: "\2304"; }
+.toggle:checked ~ .summary .st::before { content: "\2304"; }
 
 .panel { display: none; }
 .toggle:checked ~ .panel { display: block; }
@@ -214,14 +222,22 @@ h2 {
 .note { color: var(--mute); font-size: 0.85rem; font-weight: 400; }
 
 /* A registration has no response time and no daily uptime; it has a date.
-   It gets the middle column and stops before the numeric ones: a sentence
-   sitting under headings that read "last" and "uptime" is a mislabel, and
-   the sticky header exists to stop exactly that. */
+   Every row is its own grid, so an auto-sized cell is as wide as its own
+   text and nothing lines up with the row above: "expires 11 days" and
+   "expires 213 days" ended up starting at different places, which reads as
+   two ragged right-aligned scraps rather than a column of sentences.
+   Registration rows therefore get a grid of their own, with a definite
+   column for the sentence and the same last column as everyone else, so
+   "8h ago" still lines up with "1m ago" one row up. */
+.summary.reg { grid-template-columns: 4.8rem minmax(6rem, 1fr) 20rem 6rem; }
+
 .wide {
-  grid-column: 3 / span 2;
+  grid-column: 3;
   text-align: left;
   white-space: nowrap;
 }
+
+.reg .ago { grid-column: 4; }
 
 /* Column 3 holds nothing on an ordinary row, so the numbers are placed by
    hand rather than flowed. Auto-placement would put them wherever the count
@@ -324,13 +340,12 @@ dd a:hover { text-decoration-color: currentColor; }
 
 .inc { display: block; }
 
-/* Two facts fit across a panel this wide, and one fact per line made the
-   panel twice as tall as its content. A URL and a stack of outages still
-   take the full width: they are the two that do not fit in half of one. */
-@media (min-width: 60rem) {
-  dl { grid-template-columns: 7rem minmax(0, 1fr) 7rem minmax(0, 1fr); }
-  dd.full { grid-column: 2 / -1; }
-}
+/* Two columns were tried here and reverted. A definition list is read top
+   to bottom; pairing the facts two across made "down since" and "last
+   failure" sit side by side in the wrong order, wrapped "worst 304ms" onto
+   a line of its own, and left the last fact alone beside a hole — the same
+   emptiness the change was meant to remove, only smaller. Whitespace to the
+   right of a text block is what text looks like. */
 
 footer {
   display: flex;

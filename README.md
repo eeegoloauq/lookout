@@ -1,15 +1,11 @@
 # lookout
 
-A small uptime monitor. It probes the things you list in a YAML file, keeps a
-day of history in memory and a year of it on disk, shows a page you can read at
-a glance, and sends a message when something breaks.
-
-One static Go binary, two dependencies, no database, no agent, no container
-required. It fits on the smallest machine you own.
+A lightweight uptime monitor in Go. One static binary watches your services and
+tells you when one breaks.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/board-dark.png">
-  <img alt="The lookout status board" src="docs/board-light.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/board-light.png">
+  <img alt="The lookout status board" src="docs/board-dark.png">
 </picture>
 
 ## Try it
@@ -31,9 +27,22 @@ cp config.example.yaml config.yaml    # edit it
 ./lookout run config.yaml
 ```
 
-`config.example.yaml` is the reference: every option is in it, with a comment
-saying what it is for. `validate` reports every problem at once, with the line
-each one is on, and `run` will not start on a config that does not pass.
+Or as a container:
+
+```sh
+docker run -d --name lookout \
+  -p 5665:5665 \
+  -v $PWD/config.yaml:/etc/lookout/config.yaml:ro \
+  -v lookout-state:/var/lib/lookout \
+  -e LOOKOUT_TELEGRAM_TOKEN -e LOOKOUT_TELEGRAM_CHAT_ID \
+  ghcr.io/eeegoloauq/lookout:latest
+```
+
+Configuration is one YAML file, and `config.example.yaml` is its reference:
+every option is in it with a comment saying what it is for. `validate` reports
+every problem at once with the line each one is on, and `run` refuses to start
+on a config that does not pass — a monitor that dies at 2am because of a typo
+is a monitor that was not watching.
 
 ## What it checks
 
@@ -77,8 +86,8 @@ as one summary when the mute lifts.
 ## The page
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/detail-dark.png">
-  <img alt="A check expanded to show why it failed" src="docs/detail-light.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/detail-light.png">
+  <img alt="A check expanded to show why it failed" src="docs/detail-dark.png">
 </picture>
 
 Every row opens into what the check watches, when it broke, what it said, uptime

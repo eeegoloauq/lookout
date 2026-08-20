@@ -46,7 +46,7 @@
   {{range .Rows}}
   <div class="row {{.RowClass}}" id="{{.ID}}">
     <input class="toggle" type="checkbox" id="t-{{.ID}}">
-    <label class="summary" for="t-{{.ID}}">
+    <label class="summary{{if .Wide}} reg{{end}}" for="t-{{.ID}}">
       <span class="st">{{.Label}}</span>
       <span class="nm">{{.Name}}{{if .Note}} <span class="note">{{.Note}}</span>{{end}}{{if .Badge}} <span class="tag {{.BadgeClass}}">{{.Badge}}</span>{{end}}{{if .Muted}} <span class="tag">muted</span>{{end}}</span>
       {{if .Wide}}<span class="wide {{.WideClass}}">{{.Wide}}</span>{{else}}<span class="num lat">{{.Latency}}</span>
@@ -62,11 +62,11 @@
       <div class="axis"><span>24h ago</span><span>now</span></div>
       {{end}}
       <dl>
-        {{if .Link}}<dt>watching</dt><dd class="full"><a href="{{.Link}}" rel="noreferrer noopener" target="_blank">{{.Link}}</a></dd>{{end}}
+        {{if .Link}}<dt>watching</dt><dd><a href="{{.Link}}" rel="noreferrer noopener" target="_blank">{{.Link}}</a></dd>{{end}}
         {{range .Facts}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
         {{if .Incidents}}
         <dt>outages</dt>
-        <dd class="full">
+        <dd>
           {{range .Incidents}}<span class="inc">{{.When}} · {{.For}}{{if .Reason}} · {{.Reason}}{{end}}</span>{{end}}
         </dd>
         {{end}}
