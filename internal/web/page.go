@@ -51,9 +51,8 @@ type pageGroup struct {
 }
 
 type pageRow struct {
-	// ID is the fragment that opens this row. Expansion lives in the URL so
-	// that the page's own reload — which closes any <details> — cannot shut
-	// a panel someone is reading.
+	// ID names this row's checkbox and gives the row an anchor. Names are
+	// unique, so only the character set needs guarding.
 	ID       string
 	Name     string
 	Link     string
@@ -73,6 +72,9 @@ type pageRow struct {
 	Badge      string
 	BadgeClass string
 	Muted      bool
+	// BarSummary says in one sentence what the 24h bar shows, for everyone
+	// who is not hovering it with a mouse.
+	BarSummary string
 	Timeline   []pageBucket
 	Facts      []pageFact
 	Incidents  []pageIncident
@@ -127,6 +129,12 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 		case c.Unstable:
 			row.Label, row.RowClass = "UNSTABLE", "unstable"
 			unstable++
+		case c.Status == string(state.StatusUp) && c.Type == "domain":
+			// A name is registered until a date; it is not "up". Saying UP
+			// next to example.com while the site on that name says DOWN
+			// reads as the board contradicting itself.
+			row.Label, row.RowClass = "VALID", "valid"
+			up++
 		case c.Status == string(state.StatusUp):
 			row.Label, row.RowClass = "UP", "up"
 			up++
@@ -168,7 +176,8 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 		// A bar of half-hour slots says nothing about a check that runs once
 		// a day: it would be forty-seven slots of "no data" and one tick.
 		if ring, ok := s.mon.History().Ring(c.Name); ok && !sparse(c) {
-			row.Timeline = timeline(ring.Points(), now.In(loc))
+			row.Timeline = timeline(ring.Points(), now.In(loc), time.Duration(c.IntervalMS)*time.Millisecond)
+			row.BarSummary = barSummary(row.Timeline)
 		}
 		if c.Type == "domain" {
 			row.Wide = registrationSummary(c, loc)
@@ -318,9 +327,6 @@ func registrationBadge(c CheckStatus) (string, string) {
 	return fmt.Sprintf("domain %dd", r.DaysLeft), class
 }
 
-// facts is the expanded panel: what the check watches, how it has behaved,
-// and what runs out. Absent data produces no line at all — an empty field
-// is a question the reader has to answer for themselves.
 // location is the timezone clocks are shown in. Machine-readable output
 // stays UTC; a person reading a board wants the time on their own wall.
 func (s *server) location() *time.Location {
@@ -337,6 +343,9 @@ func zoneName(now time.Time, loc *time.Location) string {
 	return name
 }
 
+// facts is the expanded panel: what the check watches, how it has behaved,
+// and what runs out. Absent data produces no line at all — an empty field
+// is a question the reader has to answer for themselves.
 func facts(c CheckStatus, now time.Time, loc *time.Location, linked bool) []pageFact {
 	var out []pageFact
 	add := func(label, value string) {
@@ -367,7 +376,9 @@ func facts(c CheckStatus, now time.Time, loc *time.Location, linked bool) []page
 	if c.Type == "domain" {
 		// The uptime of a registry lookup is not the uptime of anything
 		// anyone cares about, and neither is how fast RDAP answered.
-		add("checked", "every "+formatSpan(time.Duration(c.IntervalMS)*time.Millisecond))
+		// Not "checked": the column heading already uses that word for
+		// "8h ago", and the two would be on screen together.
+		add("interval", "every "+formatSpan(time.Duration(c.IntervalMS)*time.Millisecond))
 	} else {
 		add("uptime", uptimeLine(c))
 		add("response", latencyLine(c.Latency24h))
@@ -477,7 +488,7 @@ func expiryLine(c CheckStatus, loc *time.Location, withDomain bool) string {
 // timeline folds the ring into fixed half-hour slots. A slot with any
 // failure is drawn as failing: an outage that ended must stay visible,
 // which is the whole reason to look at a bar instead of a number.
-func timeline(points []history.Point, now time.Time) []pageBucket {
+func timeline(points []history.Point, now time.Time, interval time.Duration) []pageBucket {
 	slot := history.Retention / timelineBuckets
 	type acc struct {
 		ok, bad             int
@@ -526,9 +537,10 @@ func timeline(points []history.Point, now time.Time) []pageBucket {
 			continue
 		}
 		// The tooltip is where the detail goes that the colour cannot
-		// carry: how many probes, how slow the worst one was and when,
-		// and the window the failures actually fell in.
+		// carry: how slow the worst probe was and when, and the window
+		// the failures actually fell in.
 		lines := []string{span}
+		short := false
 		if b.bad > 0 {
 			lines = append(lines, fmt.Sprintf("%d of %d failed", b.bad, total))
 			if !b.firstFail.IsZero() {
@@ -538,8 +550,13 @@ func timeline(points []history.Point, now time.Time) []pageBucket {
 				}
 				lines = append(lines, fail)
 			}
-		} else {
-			lines = append(lines, fmt.Sprintf("%d ok", b.ok))
+		} else if want := expectedProbes(interval, slot); want > 0 && total < want-1 {
+			// Saying "32 ok" over a green slot tells a reader that green
+			// means ok. The count is only news when it falls short, and
+			// then it is news about lookout: probes that never ran mean
+			// the monitor was down or the machine was thrashing.
+			lines = append(lines, fmt.Sprintf("%d of %d probes ran", total, want))
+			short = true
 		}
 		if len(b.ms) > 0 {
 			sort.Slice(b.ms, func(x, y int) bool { return b.ms[x] < b.ms[y] })
@@ -556,10 +573,72 @@ func timeline(points []history.Point, now time.Time) []pageBucket {
 			class = "b"
 		case b.bad > 0:
 			class = "p"
+		case short:
+			// A gap in the record is not a healthy half hour and must not
+			// be drawn as one.
+			class = "g"
 		}
 		out[i] = pageBucket{Class: class, Title: strings.Join(lines, "\n")}
 	}
 	return out
+}
+
+// expectedProbes is how many probes a slot should hold at this check's
+// interval. Zero means the interval is unknown and nothing can be inferred.
+func expectedProbes(interval, slot time.Duration) int {
+	if interval <= 0 || interval > slot {
+		return 0
+	}
+	return int(slot / interval)
+}
+
+// barSummary is the 24h bar said once, in a sentence. The bar is forty-eight
+// coloured rectangles with mouse-only tooltips; on a phone, on a keyboard and
+// in a screen reader it otherwise carries nothing at all.
+func barSummary(buckets []pageBucket) string {
+	bad, gap, known := 0, 0, 0
+	first, last := -1, -1
+	for i, b := range buckets {
+		switch b.Class {
+		case "n":
+			continue
+		case "b", "p":
+			bad++
+			if first < 0 {
+				first = i
+			}
+			last = i
+		case "g":
+			gap++
+		}
+		known++
+	}
+	switch {
+	case known == 0:
+		return "24h history: nothing recorded yet"
+	case bad == 0 && gap == 0:
+		return "24h history: no failures"
+	case bad == 0:
+		return fmt.Sprintf("24h history: no failures, %d half-hours with probes missing", gap)
+	}
+	when := ""
+	if first >= 0 {
+		when = ", " + slotSpan(buckets, first)
+		if last != first {
+			when += " to " + slotSpan(buckets, last)
+		}
+	}
+	return fmt.Sprintf("24h history: failures in %d of %d half-hours%s", bad, known, when)
+}
+
+// slotSpan is the clock range a slot covers, taken back off its tooltip so
+// the sentence and the tooltips can never disagree.
+func slotSpan(buckets []pageBucket, i int) string {
+	title := buckets[i].Title
+	if n := strings.IndexByte(title, '\n'); n > 0 {
+		return title[:n]
+	}
+	return title
 }
 
 // groupNote is the count beside a group heading: what is wrong, or how
@@ -574,6 +653,9 @@ func groupNote(rows []pageRow) string {
 			counts["unstable"]++
 		case r.Label == "UNKNOWN":
 			counts["unknown"]++
+		case r.Label == "VALID":
+			counts["valid"]++
+			counts["up"]++
 		default:
 			counts["up"]++
 		}
@@ -585,6 +667,11 @@ func groupNote(rows []pageRow) string {
 		}
 	}
 	if len(parts) == 0 {
+		// A group of registrations is not "2 up" for the same reason a
+		// single one is not: nothing there is running.
+		if counts["valid"] == len(rows) {
+			return fmt.Sprintf("%d valid", counts["valid"])
+		}
 		return fmt.Sprintf("%d up", counts["up"])
 	}
 	return join(parts, " · ")
@@ -651,8 +738,12 @@ func formatAgo(now, at time.Time) string {
 }
 
 func formatLatency(d time.Duration) string {
-	if d <= 0 {
-		return "0ms"
+	// A local port answers in microseconds, and the status document carries
+	// whole milliseconds, so a fast check arrives here as zero. "0ms" reads
+	// as a missing measurement; a check with no measurement shows a dash
+	// instead and never reaches this function.
+	if d < time.Millisecond {
+		return "<1ms"
 	}
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())

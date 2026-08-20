@@ -6,10 +6,12 @@
 <!-- A board that quietly shows five-minute-old state is the failure to
      avoid, so the page reloads itself once a minute — except while a row is
      open, because a reload would close the panel under whoever is reading
-     it. That exception is the only thing the script does: no fetching, no
+     it. The exception is capped: a tab left open on a panel would otherwise
+     sit on an hour-old board saying "1m ago" forever, which is the same
+     failure arrived at politely. That is the whole script: no fetching, no
      DOM building, no dependency. Without JavaScript the <noscript> refresh
      below keeps the old, unconditional behaviour. -->
-<script>setInterval(function(){if(!document.querySelector(".toggle:checked"))location.reload()},60000)</script>
+<script>var n=0;setInterval(function(){if(!document.querySelector(".toggle:checked")||++n>9)location.reload()},60000)</script>
 <noscript><meta http-equiv="refresh" content="60"></noscript>
 <title>{{.Title}}</title>
 <style>{{.CSS}}</style>
@@ -46,35 +48,36 @@
     <input class="toggle" type="checkbox" id="t-{{.ID}}">
     <label class="summary" for="t-{{.ID}}">
       <span class="st">{{.Label}}</span>
-      <span class="nm">{{.Name}}{{if .Badge}} <span class="tag {{.BadgeClass}}">{{.Badge}}</span>{{end}}{{if .Muted}} <span class="tag">muted</span>{{end}}</span>
-      {{if .Wide}}<span class="num wide {{.WideClass}}">{{.Wide}}</span>{{else}}<span class="note">{{.Note}}</span>
-      <span class="num lat">{{.Latency}}</span>
+      <span class="nm">{{.Name}}{{if .Note}} <span class="note">{{.Note}}</span>{{end}}{{if .Badge}} <span class="tag {{.BadgeClass}}">{{.Badge}}</span>{{end}}{{if .Muted}} <span class="tag">muted</span>{{end}}</span>
+      {{if .Wide}}<span class="wide {{.WideClass}}">{{.Wide}}</span>{{else}}<span class="num lat">{{.Latency}}</span>
       <span class="num up24">{{.Uptime}}</span>{{end}}
       <span class="num ago">{{.Checked}}</span>
     </label>
     <div class="panel">
       {{if .Timeline}}
-      <div class="bar">{{range .Timeline}}<i class="{{.Class}}"{{if .Title}} title="{{.Title}}"{{end}}></i>{{end}}</div>
+      <!-- title= serves the mouse and nothing else: a phone, a keyboard and
+           a screen reader all get zero from forty-eight bare rectangles. The
+           label is the same history said once, in a sentence. -->
+      <div class="bar" role="img" aria-label="{{.BarSummary}}">{{range .Timeline}}<i class="{{.Class}}"{{if .Title}} title="{{.Title}}"{{end}}></i>{{end}}</div>
       <div class="axis"><span>24h ago</span><span>now</span></div>
       {{end}}
       <dl>
-        {{if .Link}}<dt>watching</dt><dd><a href="{{.Link}}" rel="noreferrer noopener" target="_blank">{{.Link}}</a></dd>{{end}}
+        {{if .Link}}<dt>watching</dt><dd class="full"><a href="{{.Link}}" rel="noreferrer noopener" target="_blank">{{.Link}}</a></dd>{{end}}
         {{range .Facts}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
         {{if .Incidents}}
         <dt>outages</dt>
-        <dd>
+        <dd class="full">
           {{range .Incidents}}<span class="inc">{{.When}} · {{.For}}{{if .Reason}} · {{.Reason}}{{end}}</span>{{end}}
         </dd>
         {{end}}
       </dl>
-      <label class="close" for="t-{{.ID}}">close</label>
     </div>
   </div>
   {{end}}
 </section>
 {{end}}
 <footer>
-  <span>lookout · build {{.Version}}</span>
+  <span>lookout {{.Version}}</span>
   <a href="/api/status">status json</a>
   <a href="/metrics">metrics</a>
 </footer>

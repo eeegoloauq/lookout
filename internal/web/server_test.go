@@ -723,7 +723,7 @@ func TestPageRowOpensIntoDetail(t *testing.T) {
 		"last failure",
 		"uptime",
 		"response",
-		`<div class="bar">`,
+		`<div class="bar"`,
 		"24h ago",
 	} {
 		if !strings.Contains(body, want) {
@@ -748,7 +748,7 @@ func TestTimelineMarksTheFailedSlots(t *testing.T) {
 		}
 		points = append(points, history.Point{At: at, Outcome: outcome, Duration: 10 * time.Millisecond})
 	}
-	buckets := timeline(points, now)
+	buckets := timeline(points, now, time.Minute)
 	if len(buckets) != timelineBuckets {
 		t.Fatalf("got %d buckets, want %d", len(buckets), timelineBuckets)
 	}
@@ -884,7 +884,7 @@ func TestTimelineShowsTheNewestFailure(t *testing.T) {
 		}
 		points = append(points, history.Point{At: at, Outcome: outcome, Duration: 10 * time.Millisecond})
 	}
-	buckets := timeline(points, now)
+	buckets := timeline(points, now, time.Minute)
 	if last := buckets[len(buckets)-1]; last.Class != "b" && last.Class != "p" {
 		t.Errorf("the last slot is %q, but the last five minutes failed", last.Class)
 	}
@@ -944,8 +944,8 @@ checks:
 
 // Every slot carries its numbers, not only the failing ones: "was it slow
 // at four in the morning" is a question about the green part of the bar.
-// A slot that failed says how many, in what window, and how bad the worst
-// answer was — the colour alone cannot carry that.
+// A healthy slot leads with latency, because a count of successes over a
+// green tick only repeats what the colour already said.
 func TestTimelineSlotsCarryTheirNumbers(t *testing.T) {
 	now := time.Now()
 	var points []history.Point
@@ -955,10 +955,59 @@ func TestTimelineSlotsCarryTheirNumbers(t *testing.T) {
 			Duration: 62 * time.Millisecond,
 		})
 	}
-	buckets := timeline(points, now)
+	buckets := timeline(points, now, time.Minute)
 	last := buckets[len(buckets)-1]
-	if !strings.Contains(last.Title, "ok") || !strings.Contains(last.Title, "typical 62ms") {
+	if !strings.Contains(last.Title, "typical 62ms") {
 		t.Errorf("healthy slot has no tooltip: %q", last.Title)
+	}
+	if strings.Contains(last.Title, " ok") {
+		t.Errorf("healthy slot counts its successes at the reader: %q", last.Title)
+	}
+}
+
+// A half hour with a third of its probes missing is not a healthy half
+// hour: it is lookout admitting it was not looking. Drawing it green is
+// the one thing the bar must not do.
+func TestTimelineShowsProbesThatNeverRan(t *testing.T) {
+	now := time.Now()
+	var points []history.Point
+	// Ten probes where thirty were due.
+	for i := 10; i > 0; i-- {
+		points = append(points, history.Point{
+			At: now.Add(-time.Duration(i) * time.Minute), Outcome: check.OutcomeUp,
+			Duration: 5 * time.Millisecond,
+		})
+	}
+	buckets := timeline(points, now, time.Minute)
+	last := buckets[len(buckets)-1]
+	if last.Class != "g" {
+		t.Errorf("slot class = %q, want the gap class", last.Class)
+	}
+	if !strings.Contains(last.Title, "of 30 probes ran") {
+		t.Errorf("tooltip = %q", last.Title)
+	}
+	if got := barSummary(buckets); !strings.Contains(got, "probes missing") {
+		t.Errorf("bar summary = %q", got)
+	}
+}
+
+// The bar is forty-eight rectangles with mouse-only tooltips. Everything
+// it knows has to be sayable in one line, or a phone gets nothing.
+func TestBarSummarySaysWhatTheBarShows(t *testing.T) {
+	now := time.Now()
+	var points []history.Point
+	for i := 1440; i > 0; i-- {
+		out := check.OutcomeUp
+		if i > 700 && i < 720 {
+			out = check.OutcomeDown
+		}
+		points = append(points, history.Point{
+			At: now.Add(-time.Duration(i) * time.Minute), Outcome: out, Duration: time.Millisecond,
+		})
+	}
+	got := barSummary(timeline(points, now, time.Minute))
+	if !strings.Contains(got, "failures in 1 of 48 half-hours") {
+		t.Errorf("summary = %q", got)
 	}
 }
 
@@ -1069,7 +1118,7 @@ func TestFailedSlotTooltipSaysWhenAndHowBad(t *testing.T) {
 		}
 		points = append(points, p)
 	}
-	buckets := timeline(points, now)
+	buckets := timeline(points, now, time.Minute)
 	last := buckets[len(buckets)-1]
 	for _, want := range []string{"2 of ", "failed", "failing ", "worst 5.0s at "} {
 		if !strings.Contains(last.Title, want) {
@@ -1105,10 +1154,11 @@ func TestOpenRowIsNotClosedByTheReload(t *testing.T) {
 			t.Errorf("page missing %q", want)
 		}
 	}
-	// Closing has to be possible from the panel too, without hunting for
-	// the row header again on a long one.
-	if !strings.Contains(body, `<label class="close" for="t-c-photos">close</label>`) {
-		t.Errorf("no way to close an open row from inside it:\n%s", body)
+	// The row header is the one control. A second label pointing at the
+	// same checkbox gave the row two accessible names and read as a button
+	// while behaving like nothing.
+	if strings.Contains(body, `class="close"`) {
+		t.Error("the panel grew a second control for the same checkbox")
 	}
 }
 
