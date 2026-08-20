@@ -64,7 +64,7 @@ func TestRegistrableName(t *testing.T) {
 		"music.cdn.example.dev": "example.dev",
 		"example.co.uk":         "example.co.uk",
 		"a.b.example.co.uk":     "example.co.uk",
-		"198.51.100.1":           "",
+		"198.51.100.1":          "",
 		"::1":                   "",
 		"localhost":             "",
 		"immich.lan":            "",
