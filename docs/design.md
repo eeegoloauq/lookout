@@ -91,7 +91,11 @@ It renders on the server, ships no JavaScript worth the name, loads no font, no
 icon set and no stylesheet from anywhere, and reloads itself once a minute. A
 status page that cannot render when a CDN is down is not a status page.
 
-It shows one line per check and opens into the detail — what it watches, when it
+It is a real table, with real column headings — the columns are what make
+"11ms" a response time and "100.0%" a day's uptime, and a reader who is being
+read the page aloud gets that only if the markup says so. Building the same
+look out of generic boxes was the shortcut, and it cost every reader who cannot
+see the columns. It shows one line per check and opens into the detail — what it watches, when it
 broke, why, uptime over three windows, the latency spread, and a bar of the last
 24 hours. Each row is shown in the units it actually measures: a domain
 registration has no response time and no daily uptime, so it leads with the date

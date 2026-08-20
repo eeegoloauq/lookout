@@ -131,10 +131,9 @@ Notifications go to Telegram and nowhere else. There is no web UI for adding a
 check; the config is in git, and a check that exists only inside a running
 process is one nobody can review or restore.
 
-The status page is a dense grid of numbers whose column headings are not
-programmatically tied to the cells, so a screen reader reads a row as a list of
-values without labels. The 24-hour bar carries a text summary for that reason;
-the table itself does not yet.
+The status page renders without JavaScript, which means a row opens through a
+checkbox and `:has()`. A browser without `:has()` shows the whole board and
+never opens a row: the detail is out of reach, nothing else is.
 
 ## Contributing
 

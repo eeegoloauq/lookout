@@ -97,102 +97,95 @@ h1 {
 
 .empty { color: var(--mute); }
 
-/* One header row for the whole board, stuck to the top: without it the
-   right-hand numbers are three unlabelled columns, and "9s ago" has to be
-   guessed at. It shares the summary grid so the labels sit over their
-   columns. */
-.cols {
+/* Screen-reader-only: present in the accessibility tree, absent from the
+   page. clip-path rather than display:none, which would remove it from
+   both. */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.board {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* Auto layout on purpose. The registration sentence is a nowrap cell
+   spanning the three trailing columns, and auto layout is what lets it
+   claim the width it needs from the flexible name column instead of
+   overflowing the table. Because a table sizes its columns once for every
+   row, the sentences share a left edge without being told to. */
+.board td, .board th { padding: 0.3rem 0.55rem; }
+
+thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  display: grid;
-  grid-template-columns: 4.8rem minmax(6rem, 1fr) auto 5rem 5rem 6rem;
-  gap: 0 0.75rem;
-  padding: 0.15rem 0.55rem 0.25rem 0.7rem;
   background: var(--paper);
   border-bottom: 1px solid var(--rule);
   color: var(--mute);
   font-size: 0.7rem;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  text-align: right;
 }
 
-.cols span:nth-child(n+4) { text-align: right; }
+thead .c-st { text-align: left; }
+thead .c-nm { text-align: left; }
+
+.c-lat, .c-up { width: 5rem; }
+.c-ago { width: 6rem; }
+
+.empty { color: var(--mute); }
 
 /* Groups are headings with air around them, not a column repeated on every
    row: the eye finds "Public Sites" once instead of twenty-five times. */
-.group { margin: 1.4rem 0 0; }
-.group:first-of-type { margin-top: 0.6rem; }
-
-h2 {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  margin: 0 0 0.3rem;
+.board .ghead th {
+  padding: 1.4rem 0.55rem 0.3rem;
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--mute);
+  text-align: left;
 }
 
+.board .group:first-of-type .ghead th { padding-top: 0.6rem; }
+
 .gnote {
-  margin-left: auto;
+  float: right;
   letter-spacing: 0.04em;
   text-transform: none;
   font-weight: 500;
 }
 
-.row { border-bottom: 1px solid var(--rule); }
-.row:first-of-type { border-top: 1px solid var(--rule); }
+.row td { border-bottom: 1px solid var(--rule); }
+.ghead + .row td { border-top: 1px solid var(--rule); }
+.row:hover td { background: var(--panel); }
 
-/* Expansion is a checkbox, hidden and driven by the row's own label. A URL
-   fragment survives a reload but makes the browser scroll the row to the
-   top of the window on every click, which reads as the page jerking under
-   the pointer; a checkbox moves nothing, opens as many rows as you like,
-   and is operable from the keyboard. The reload is what would close it, and
-   the script in the head is what stops the reload while it is open. */
-.summary {
-  position: relative;
-  display: grid;
-  color: inherit;
-  text-decoration: none;
-  grid-template-columns: 4.8rem minmax(6rem, 1fr) auto 5rem 5rem 6rem;
-  align-items: baseline;
-  gap: 0 0.75rem;
-  padding: 0.3rem 0.55rem 0.3rem 1.15rem;
-  cursor: pointer;
-}
+/* Expansion is a checkbox driven by the label around the check's name. A
+   URL fragment survives a reload but makes the browser scroll the row to
+   the top of the window on every click, which reads as the page jerking
+   under the pointer; a checkbox moves nothing, opens as many rows as you
+   like, and is operable from the keyboard. The reload is what would close
+   it, and the script in the head is what stops the reload while it is open.
 
-/* The whole row is the control, but a row that gives no sign of it is a
-   panel nobody finds. The mark in the left gutter is the smallest thing
-   that says "this opens" without becoming a second thing to aim at. */
-.summary:hover { background: var(--panel); }
+   The detail row is a sibling, so :has() is what connects them. A browser
+   without :has() shows the board and never opens a row — the whole page
+   still works, it is only the detail that is out of reach. */
+.detail { display: none; }
+.row:has(.toggle:checked) + .detail { display: table-row; }
 
-/* The mark hangs off the status word rather than being positioned in the
-   row, so it shares that word's baseline by construction. Absolutely
-   positioned, it sat on the top of the row instead, which put it at a
-   different height on every row whose tallest cell differed. The fixed
-   width keeps the word from shifting when the row opens. */
-.st::before {
-  content: "\203A";
-  display: inline-block;
-  width: 0.45rem;
-  margin-left: -0.75rem;
-  margin-right: 0.3rem;
-  color: var(--mute);
-  opacity: 0.6;
-  font-weight: 400;
-}
-
-.toggle:checked ~ .summary .st::before { content: "\2304"; }
-
-.panel { display: none; }
-.toggle:checked ~ .panel { display: block; }
+.nm label { cursor: pointer; }
 
 /* The checkbox itself is never seen: it is the row's state, not a control
-   of its own. It stays focusable, so the row can be opened with the
-   keyboard, and the focus ring is drawn on the row instead. */
+   of its own. It stays focusable, so a row opens from the keyboard, and the
+   ring is drawn on the name, which is the thing being operated. */
 .toggle {
   position: absolute;
   width: 1px;
@@ -200,17 +193,33 @@ h2 {
   opacity: 0;
 }
 
-.toggle:focus-visible ~ .summary { outline: 2px solid var(--ink); outline-offset: -2px; }
+.toggle:focus-visible + label { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* The mark sits inside the status cell and on the same line as the word, so
+   it cannot drift: positioned against the row instead, it sat at a
+   different height on every row whose tallest cell differed. The fixed
+   width keeps the word from shifting when the row opens. */
+.disc {
+  display: inline-block;
+  width: 0.45rem;
+  margin-right: 0.35rem;
+  color: var(--mute);
+  opacity: 0.6;
+  font-weight: 400;
+}
+
+.disc::before { content: "\203A"; }
+.row:has(.toggle:checked) .disc::before { content: "\2304"; }
 
 /* The state is said twice on purpose — the colour bar on the left edge is
    what the eye catches, the word is what stays true in a screenshot, in a
-   grep, and for a reader who does not see the colour. The filled badge was
-   a third telling of the same thing, so it is gone. */
+   grep, and for a reader who does not see the colour. */
 .st {
   font-weight: 650;
   white-space: nowrap;
   font-size: 0.78rem;
   letter-spacing: 0.08em;
+  border-left: 3px solid transparent;
 }
 
 .nm { font-weight: 600; }
@@ -222,29 +231,14 @@ h2 {
 .note { color: var(--mute); font-size: 0.85rem; font-weight: 400; }
 
 /* A registration has no response time and no daily uptime; it has a date.
-   Every row is its own grid, so an auto-sized cell is as wide as its own
-   text and nothing lines up with the row above: "expires 11 days" and
-   "expires 213 days" ended up starting at different places, which reads as
-   two ragged right-aligned scraps rather than a column of sentences.
-   Registration rows therefore get a grid of their own, with a definite
-   column for the sentence and the same last column as everyone else, so
-   "8h ago" still lines up with "1m ago" one row up. */
-.summary.reg { grid-template-columns: 4.8rem minmax(6rem, 1fr) 20rem 6rem; }
-
+   It takes the three trailing columns as one left-aligned sentence: a date
+   is prose, and prose lines up on the left. "8h ago" goes with them —
+   for a check that runs once a day, when it last ran is the schedule, not
+   news. */
 .wide {
-  grid-column: 3;
   text-align: left;
   white-space: nowrap;
 }
-
-.reg .ago { grid-column: 4; }
-
-/* Column 3 holds nothing on an ordinary row, so the numbers are placed by
-   hand rather than flowed. Auto-placement would put them wherever the count
-   of cells happened to land, which is how a row ends up two lines tall. */
-.lat { grid-column: 4; }
-.up24 { grid-column: 5; }
-.ago { grid-column: 6; }
 
 .wide.soon { color: var(--flap); }
 .wide.bad { color: var(--down); font-weight: 650; }
@@ -261,37 +255,36 @@ h2 {
 .tag.soon { color: var(--flap); }
 .tag.bad { color: var(--down); }
 
-.row.up { box-shadow: inset 3px 0 0 var(--up); }
-.row.down { box-shadow: inset 3px 0 0 var(--down); }
-.row.unknown { box-shadow: inset 3px 0 0 var(--unknown); }
-.row.unstable { box-shadow: inset 3px 0 0 var(--flap); }
+.row.up .st { border-left-color: var(--up); }
+.row.valid .st { border-left-color: var(--up); }
+.row.down .st { border-left-color: var(--down); }
+.row.unknown .st { border-left-color: var(--unknown); }
+.row.unstable .st { border-left-color: var(--flap); }
 
-.row.up .st { color: var(--up); }
+.row.up .st, .row.valid .st { color: var(--mute); font-weight: 500; }
 .row.down .st { color: var(--down); }
 .row.unknown .st { color: var(--unknown); }
 .row.unstable .st { color: var(--flap); }
 
-/* A healthy row says "up" quietly: on a board of twenty-five checks the eye
-   should be caught by the four that are not. Quiet is the secondary ink,
-   not a faded green — fading a colour toward the background is how small
-   text ends up below the contrast floor, and the stripe on the left edge is
-   already carrying "green". */
-.row.up .st, .row.valid .st { color: var(--mute); font-weight: 500; }
-.row.valid { box-shadow: inset 3px 0 0 var(--up); }
-
-.row.muted { opacity: 0.82; }
+.row.muted td { opacity: 0.82; }
 
 /* The expanded panel answers the three questions a red row raises: what was
    watched, what it said, and how it has behaved for the last day. */
-.panel {
-  /* The row's colour stripe is an inset shadow on the parent; leaving the
-     first pixels of the panel unpainted lets it run down the side of the
-     detail too, so the panel reads as part of its row. */
-  margin-left: 3px;
+.detail td {
+  /* The status cell carries the row's colour on its left border; the detail
+     cell repeats it so the stripe runs down the side of the panel and binds
+     it to the row it belongs to. */
+  border-left: 3px solid transparent;
   padding: 0.55rem 0.7rem 0.8rem 1.1rem;
   background: var(--panel);
   font-size: 0.88rem;
 }
+
+.row.up:has(.toggle:checked) + .detail td,
+.row.valid:has(.toggle:checked) + .detail td { border-left-color: var(--up); }
+.row.down:has(.toggle:checked) + .detail td { border-left-color: var(--down); }
+.row.unknown:has(.toggle:checked) + .detail td { border-left-color: var(--unknown); }
+.row.unstable:has(.toggle:checked) + .detail td { border-left-color: var(--flap); }
 
 .bar {
   display: flex;
@@ -361,29 +354,21 @@ footer a { color: var(--mute); }
 
 @media (max-width: 44rem) {
   body { padding: 0.8rem 0.6rem 1.5rem; }
-  .summary {
-    grid-template-columns: 4.6rem minmax(5rem, 1fr) 4.2rem 5rem;
-    gap: 0 0.5rem;
-  }
+  .board td, .board th { padding: 0.3rem 0.35rem; }
   /* Four columns is what fits: state, name, the day's uptime, and when it
      was last checked. The single last latency reading is the first thing
-     to go — the 24h figure says more in the same space. */
-  .note, .lat { display: none; }
-  .up24 { grid-column: 3; }
-  .ago { grid-column: 4; }
+     to go — the 24h figure says more in the same space. Hiding a cell means
+     hiding its heading too, or the remaining ones shift under the wrong
+     labels. */
+  .note, .lat, .c-lat { display: none; }
+  .c-up { width: 4.6rem; }
+  .c-ago { width: 5rem; }
   /* A badge that wraps onto its own line stops reading as part of the name
      and doubles the height of the row it belongs to. */
   .nm .tag { white-space: nowrap; }
-  /* On a phone the expiry gets both remaining columns: for a check that
-     runs once a day, "8h ago" is the schedule, not news. */
-  .wide { grid-column: 3 / span 2; white-space: normal; }
-  .wide ~ .ago { display: none; }
-  .cols {
-    grid-template-columns: 4.6rem minmax(5rem, 1fr) 4.2rem 5rem;
-    gap: 0 0.5rem;
-  }
-  .cols span:nth-child(3), .cols span:nth-child(4) { display: none; }
-  .cols span:nth-child(n+5) { text-align: right; }
+  /* The expiry keeps both remaining columns and is allowed to wrap: there
+     is no width here for a sentence that refuses to. */
+  .wide { white-space: normal; font-size: 0.85rem; }
   dl { grid-template-columns: 1fr; gap: 0 0; }
   dt { margin-top: 0.35rem; }
 }

@@ -31,29 +31,51 @@
 {{if .Empty}}
 <p class="empty">No checks configured.</p>
 {{else}}
-<div class="cols">
-  <span></span>
-  <span>check</span>
-  <span></span>
-  <span>last</span>
-  <span>uptime</span>
-  <span>checked</span>
-</div>
-{{end}}
+<!-- A real table, not a grid of divs that looks like one. The columns are
+     what make "11ms" a response time and "100.0%" a day's uptime, and a
+     reader who is being read the page aloud gets those headings only if the
+     markup actually says table. It also fixes an alignment bug for free:
+     every row used to be its own grid, so an auto-sized cell was as wide as
+     its own text and lined up with nothing above it. A table computes its
+     columns once, for all rows. -->
+<table class="board">
+  <caption class="sr">Checks and their current state</caption>
+  <thead>
+    <tr>
+      <th scope="col" class="c-st"><span class="sr">status</span></th>
+      <th scope="col" class="c-nm">check</th>
+      <th scope="col" class="c-lat">last</th>
+      <th scope="col" class="c-up">uptime</th>
+      <th scope="col" class="c-ago">checked</th>
+    </tr>
+  </thead>
 {{range .Groups}}
-<section class="group">
-  <h2>{{.Name}}<span class="gnote">{{.Note}}</span></h2>
-  {{range .Rows}}
-  <div class="row {{.RowClass}}" id="{{.ID}}">
-    <input class="toggle" type="checkbox" id="t-{{.ID}}">
-    <label class="summary{{if .Wide}} reg{{end}}" for="t-{{.ID}}">
-      <span class="st">{{.Label}}</span>
-      <span class="nm">{{.Name}}{{if .Note}} <span class="note">{{.Note}}</span>{{end}}{{if .Badge}} <span class="tag {{.BadgeClass}}">{{.Badge}}</span>{{end}}{{if .Muted}} <span class="tag">muted</span>{{end}}</span>
-      {{if .Wide}}<span class="wide {{.WideClass}}">{{.Wide}}</span>{{else}}<span class="num lat">{{.Latency}}</span>
-      <span class="num up24">{{.Uptime}}</span>{{end}}
-      <span class="num ago">{{.Checked}}</span>
-    </label>
-    <div class="panel">
+  <tbody class="group">
+    <tr class="ghead">
+      <th colspan="5" scope="colgroup">{{.Name}}<span class="gnote">{{.Note}}</span></th>
+    </tr>
+    {{range .Rows}}
+    <tr class="row {{.RowClass}}" id="{{.ID}}">
+      <td class="st">
+        <!-- The mark is decoration: the checkbox beside it is the control,
+             and a reader being read this row does not need to be told about
+             an angle bracket. -->
+        <span class="disc" aria-hidden="true"></span>{{.Label}}
+      </td>
+      <td class="nm">
+        <input class="toggle" type="checkbox" id="t-{{.ID}}">
+        <label for="t-{{.ID}}">{{.Name}}</label>{{if .Note}} <span class="note">{{.Note}}</span>{{end}}{{if .Badge}} <span class="tag {{.BadgeClass}}">{{.Badge}}</span>{{end}}{{if .Muted}} <span class="tag">muted</span>{{end}}
+      </td>
+      {{if .Wide}}
+      <td class="wide {{.WideClass}}" colspan="3">{{.Wide}}</td>
+      {{else}}
+      <td class="num lat">{{.Latency}}</td>
+      <td class="num up24">{{.Uptime}}</td>
+      <td class="num ago">{{.Checked}}</td>
+      {{end}}
+    </tr>
+    <tr class="detail">
+      <td colspan="5">
       {{if .Timeline}}
       <!-- title= serves the mouse and nothing else: a phone, a keyboard and
            a screen reader all get zero from forty-eight bare rectangles. The
@@ -71,10 +93,12 @@
         </dd>
         {{end}}
       </dl>
-    </div>
-  </div>
-  {{end}}
-</section>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+{{end}}
+</table>
 {{end}}
 <footer>
   <span>lookout {{.Version}}</span>

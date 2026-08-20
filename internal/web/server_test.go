@@ -695,12 +695,12 @@ func TestPageGroupsAreHeadings(t *testing.T) {
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
 	feed(t, m, "Router", "UU", time.Now(), 20*time.Millisecond, 200)
 	body := get(t, New(m, "test"), "/").Body.String()
-	for _, want := range []string{"<h2>Services", "<h2>Core"} {
+	for _, want := range []string{`scope="colgroup">Services`, `scope="colgroup">Core`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing group heading %q", want)
 		}
 	}
-	if strings.Contains(body, "<th>Group") {
+	if strings.Contains(body, ">group<") {
 		t.Error("the group column is supposed to be gone")
 	}
 	// Two checks, two groups: each heading carries its own tally.
@@ -717,7 +717,7 @@ func TestPageRowOpensIntoDetail(t *testing.T) {
 	feed(t, m, "Router", "DDD", now.Add(-30*time.Minute), 1500*time.Millisecond, 502)
 	body := get(t, New(m, "test"), "/").Body.String()
 	for _, want := range []string{
-		`class="summary" for="t-c-`,
+		`<label for="t-c-`,
 		"watching",
 		"down since",
 		"last failure",
@@ -817,15 +817,26 @@ func TestLastFailureSurvivesRecovery(t *testing.T) {
 	t.Fatal("Photos missing from the status document")
 }
 
-// Three right-hand columns of bare numbers need saying what they are once.
+// Three right-hand columns of bare numbers need saying what they are once,
+// and a column heading is only a heading to a screen reader if the markup
+// says so: a div that looks like a table announces a row as a run of values
+// with nothing tying them to their labels.
 func TestPageLabelsItsColumns(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
 	body := get(t, New(m, "test"), "/").Body.String()
-	for _, want := range []string{`class="cols"`, ">check<", ">uptime<", ">checked<"} {
+	for _, want := range []string{
+		"<table", "<thead>", "<caption",
+		`scope="col" class="c-nm">check<`,
+		`scope="col" class="c-up">uptime<`,
+		`scope="col" class="c-ago">checked<`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("column header missing %q", want)
 		}
+	}
+	if strings.Contains(body, `role="table"`) || strings.Contains(body, `role="cell"`) {
+		t.Error("table semantics are the browser's job, not ARIA's")
 	}
 }
 
@@ -1144,8 +1155,8 @@ func TestOpenRowIsNotClosedByTheReload(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<input class="toggle" type="checkbox" id="t-c-photos">`,
-		`<label class="summary" for="t-c-photos">`,
-		".toggle:checked ~ .panel",
+		`<label for="t-c-photos">`,
+		".row:has(.toggle:checked) + .detail",
 		`.toggle:checked`,
 		"location.reload",
 		"<noscript><meta http-equiv=\"refresh\"",
@@ -1224,10 +1235,32 @@ checks:
 		})
 	}
 	body := get(t, New(m, "test"), "/").Body.String()
-	if !strings.Contains(body, "<h2>Domains") {
+	if !strings.Contains(body, `scope="colgroup">Domains`) {
 		t.Errorf("registration_group did not produce a group:\n%s", body)
 	}
 	if !strings.Contains(body, "expires 61 days") {
 		t.Errorf("the derived row does not show its date:\n%s", body)
+	}
+}
+
+// The row's one control is the label around the check's name. A second one
+// pointing at the same checkbox concatenates into its accessible name, which
+// is how the row ends up announcing itself as a paragraph; the disclosure
+// mark is decoration and has to stay out of the tree entirely.
+func TestRowHasOneNamedControl(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test"), "/").Body.String()
+
+	if n := strings.Count(body, `for="t-c-photos"`); n != 1 {
+		t.Errorf("checkbox has %d labels, want exactly 1", n)
+	}
+	if !strings.Contains(body, `<span class="disc" aria-hidden="true">`) {
+		t.Error("the disclosure mark is being read out as content")
+	}
+	// A detail row that stays in the flow when collapsed is read out even
+	// though nobody can see it.
+	if !strings.Contains(body, ".detail { display: none; }") {
+		t.Error("a collapsed panel is still in the accessibility tree")
 	}
 }
