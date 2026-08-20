@@ -1116,7 +1116,7 @@ func TestSlugsAreStableAndSafe(t *testing.T) {
 	for name, want := range map[string]string{
 		"Photos":             "c-photos",
 		"RAG (chat backend)": "c-rag-chat-backend",
-		"example.ru":     "c-example-ru",
+		"example.ru":         "c-example-ru",
 		"Mail / DNS":         "c-mail-dns",
 	} {
 		if got := slug(name); got != want {

@@ -6,79 +6,47 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eeegoloauq/lookout/internal/check"
-	"github.com/eeegoloauq/lookout/internal/config"
+	"github.com/eeegoloauq/lookout/internal/demo"
 )
-
-const demoCfg = `
-checks:
-  - name: Nginx Proxy Manager
-    group: Core
-    type: http
-    url: http://198.51.100.52:81
-  - name: Forgejo
-    group: Core
-    type: http
-    url: http://198.51.100.27:3000
-  - name: Immich
-    group: Services
-    type: http
-    url: http://198.51.100.24:2283
-  - name: Vaultwarden
-    group: Services
-    type: http
-    url: https://vault.example.dev
-  - name: Website
-    group: Public Sites
-    type: http
-    url: https://example.ru
-  - name: RAG (chat backend)
-    group: Public Sites
-    type: http
-    url: https://example.com/api/health
-`
 
 // TestRenderDemoPage is a design tool, not an assertion: it writes the page
 // with a day of plausible history to /tmp so a change to the layout can be
-// looked at in a browser instead of imagined.
+// looked at in a browser instead of imagined. The data is the same one
+// `lookout demo` serves, so what is reviewed here is what ships.
 //
 //	LOOKOUT_RENDER=1 go test ./internal/web -run RenderDemoPage
 func TestRenderDemoPage(t *testing.T) {
 	if os.Getenv("LOOKOUT_RENDER") == "" {
 		t.Skip("set LOOKOUT_RENDER=1 to write /tmp/lookout-page.html")
 	}
-	m := testMonitor(t, demoCfg)
-	now := time.Now()
-	day := now.Add(-24 * time.Hour)
-	feed(t, m, "Nginx Proxy Manager", strings.Repeat("U", 1440), day, 2*time.Millisecond, 200)
-	feed(t, m, "Forgejo", strings.Repeat("U", 1440), day, 4*time.Millisecond, 200)
-	feed(t, m, "Immich", strings.Repeat("U", 700)+strings.Repeat("D", 25)+strings.Repeat("U", 715), day, 38*time.Millisecond, 200)
-	feed(t, m, "Vaultwarden", strings.Repeat("U", 1440), day, 61*time.Millisecond, 200)
-	feed(t, m, "Website", strings.Repeat("U", 1300)+strings.Repeat("UD", 70), day, 74*time.Millisecond, 200)
-	feed(t, m, "RAG (chat backend)", strings.Repeat("U", 1420)+strings.Repeat("D", 20), day, 5000*time.Millisecond, 502)
-
-	for name, days := range map[string]int{"example.ru": 11, "example.com": 61} {
-		var c config.Check
-		for _, ch := range m.Config().Checks {
-			if ch.Name == name {
-				c = ch
-			}
-		}
-		res := check.Result{
-			Name: c.Name, At: now.Add(-8 * time.Hour), Outcome: check.OutcomeUp, Duration: 190 * time.Millisecond,
-			DomainExpiresAt: now.Add(time.Duration(days)*24*time.Hour + time.Hour),
-			DomainState:     "REGISTERED, DELEGATED, VERIFIED", DomainSource: "rdap",
-		}
-		m.Machine().Observe(c, res)
-		m.History().Record(res)
+	m, err := demo.Monitor(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	body := get(t, New(m, "e7ebf7b · 19 Aug 2026"), "/").Body.String()
+	body := get(t, New(m, "v0.1.0 (0000000) · 20 Aug 2026"), "/").Body.String()
 	if err := os.WriteFile("/tmp/lookout-page.html", []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	open := strings.Replace(body, `<details class="row down"`, `<details open class="row down"`, 1)
+	open := strings.Replace(body, `class="toggle"`, `class="toggle" checked`, 1)
 	if err := os.WriteFile("/tmp/lookout-page-open.html", []byte(open), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The demo board is a shipped surface: if it stops rendering, `lookout demo`
+// and every screenshot made from it break with it.
+func TestDemoBoardRenders(t *testing.T) {
+	m, err := demo.Monitor(t.TempDir(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, New(m, "test"), "/").Body.String()
+	for _, want := range []string{"Website API", "Domains", "example.com", "slowest 5%"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("demo page is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "192.168.") {
+		t.Error("demo page leaks a private address")
 	}
 }

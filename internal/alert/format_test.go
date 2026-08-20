@@ -406,7 +406,7 @@ func TestHTMLBodiesAreLeftOutOfAlerts(t *testing.T) {
 func TestTransportErrorsDropTheRequestPrefix(t *testing.T) {
 	got := Format([]state.Event{{
 		Kind: state.EventDown, Check: "Immich",
-		Result: check.Result{Err: "Get http://198.51.100.24:2283/: dial tcp 198.51.100.24:2283: connect: connection refused"},
+		Result: check.Result{Err: "Get http://photos.lan:2283/: dial tcp 198.51.100.24:2283: connect: connection refused"},
 	}})
 	if strings.Contains(got, "Get http") {
 		t.Errorf("request prefix survived: %q", got)

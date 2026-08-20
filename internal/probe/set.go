@@ -11,6 +11,7 @@ import (
 // Set routes a check to the probe that implements its type.
 type Set struct {
 	HTTP   *HTTP
+	TCP    *TCP
 	DNS    *DNS
 	Domain *Domain
 }
@@ -19,6 +20,7 @@ type Set struct {
 func New() *Set {
 	return &Set{
 		HTTP:   NewHTTP(),
+		TCP:    NewTCP(),
 		DNS:    NewDNS(),
 		Domain: NewDomain(),
 	}
@@ -29,6 +31,8 @@ func New() *Set {
 // as success.
 func (s *Set) Probe(ctx context.Context, c config.Check) check.Result {
 	switch c.Type {
+	case config.TypeTCP:
+		return s.TCP.Probe(ctx, c)
 	case config.TypeDNS:
 		return s.DNS.Probe(ctx, c)
 	case config.TypeDomain:

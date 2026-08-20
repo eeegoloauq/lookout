@@ -114,6 +114,17 @@ checks:
       body_contains: "ok"
       response_time: "<2s"
 
+  # Everything that listens without speaking HTTP: a database, a broker, an
+  # SSH daemon, a container that only exposes a port. lookout dials, notes
+  # that the connection was accepted and hangs up without sending a byte, so
+  # the target's log does not fill with broken clients.
+  - name: Database
+    group: Services
+    type: tcp
+    address: db.service.example:5432
+    expect:
+      response_time: "<1s"
+
   - name: Noisy Test Box
     group: Lab
     type: http

@@ -94,6 +94,11 @@ func registrableName(c Check) string {
 		return strings.ToLower(c.Registration)
 	}
 	host := c.Host
+	if c.Address != "" {
+		if h, _, err := net.SplitHostPort(c.Address); err == nil {
+			host = h
+		}
+	}
 	if c.URL != "" {
 		u, err := url.Parse(c.URL)
 		if err != nil {

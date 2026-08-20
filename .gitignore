@@ -1,11 +1,15 @@
 # real configuration and secrets never belong in this repository
 config.yaml
 *.env
+
+# build output
 /lookout
+/lookout.*
+/dist/
+
+# runtime state
 /data/
-*.db
-*.db-wal
-*.db-shm
 /state.json
 /live-state.json
 /history.jsonl
+/samples.jsonl

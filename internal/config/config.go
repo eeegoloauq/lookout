@@ -77,6 +77,7 @@ type Type string
 
 const (
 	TypeHTTP   Type = "http"
+	TypeTCP    Type = "tcp"
 	TypeDNS    Type = "dns"
 	TypeDomain Type = "domain"
 )
@@ -186,6 +187,9 @@ type Check struct {
 	URL     string
 	Method  string
 	Headers map[string]string
+
+	// Address is the host:port a tcp check dials. Empty on every other type.
+	Address string
 
 	// Host is the DNS name a dns check queries, or the registered
 	// name a domain check watches. Empty on http checks.

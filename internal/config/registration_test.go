@@ -60,18 +60,18 @@ checks:
 // behind them; publicsuffix's ICANN flag is what tells them apart.
 func TestRegistrableName(t *testing.T) {
 	for host, want := range map[string]string{
-		"example.ru":             "example.ru",
+		"example.ru":            "example.ru",
 		"music.cdn.example.dev": "example.dev",
-		"example.co.uk":              "example.co.uk",
-		"a.b.example.co.uk":          "example.co.uk",
-		"198.51.100.1":                "",
-		"::1":                        "",
-		"localhost":                  "",
-		"immich.lan":                 "",
-		"box.home.arpa":              "",
-		"site.invalid":               "",
-		"com":                        "",
-		"":                           "",
+		"example.co.uk":         "example.co.uk",
+		"a.b.example.co.uk":     "example.co.uk",
+		"198.51.100.1":           "",
+		"::1":                   "",
+		"localhost":             "",
+		"immich.lan":            "",
+		"box.home.arpa":         "",
+		"site.invalid":          "",
+		"com":                   "",
+		"":                      "",
 	} {
 		if got := registrable(host); got != want {
 			t.Errorf("registrable(%q) = %q, want %q", host, got, want)

@@ -92,6 +92,7 @@ type fileCheck struct {
 	Group            string            `yaml:"group"`
 	Type             string            `yaml:"type"`
 	URL              string            `yaml:"url"`
+	Address          string            `yaml:"address"`
 	Host             string            `yaml:"host"`
 	Domain           string            `yaml:"domain"`
 	QueryType        string            `yaml:"query_type"`
@@ -686,15 +687,17 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin def
 
 	switch rc.Type {
 	case "":
-		c.addf(path+".type", "type is required, one of %q, %q, %q", TypeHTTP, TypeDNS, TypeDomain)
+		c.addf(path+".type", "type is required, one of %q, %q, %q, %q", TypeHTTP, TypeTCP, TypeDNS, TypeDomain)
 	case string(TypeHTTP):
 		chk.Type = TypeHTTP
+	case string(TypeTCP):
+		chk.Type = TypeTCP
 	case string(TypeDNS):
 		chk.Type = TypeDNS
 	case string(TypeDomain):
 		chk.Type = TypeDomain
 	default:
-		c.addf(path+".type", "unknown check type %q, expected one of %q, %q, %q", rc.Type, TypeHTTP, TypeDNS, TypeDomain)
+		c.addf(path+".type", "unknown check type %q, expected one of %q, %q, %q, %q", rc.Type, TypeHTTP, TypeTCP, TypeDNS, TypeDomain)
 	}
 
 	applyTypeDefaults(&chk, origin, rc)
@@ -764,8 +767,26 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin def
 		if rc.Resolver != nil {
 			c.addf(path+".resolver", "resolver is only valid on %q checks", TypeDNS)
 		}
+		if strings.TrimSpace(rc.Address) != "" {
+			c.addf(path+".address", "address is for %q checks; %q checks use url", TypeTCP, TypeHTTP)
+		}
 		chk.URL = resolveURL(c, path, rc)
 		chk.Headers = resolveHeaders(c, path, rc.Headers)
+	case TypeTCP:
+		rejectHTTPFields(c, path, rc)
+		if strings.TrimSpace(rc.Host) != "" {
+			c.addf(path+".host", "host is for %q and %q checks; %q checks use address", TypeDNS, TypeDomain, TypeTCP)
+		}
+		if strings.TrimSpace(rc.Domain) != "" {
+			c.addf(path+".domain", "domain is for %q checks; %q checks use address", TypeDomain, TypeTCP)
+		}
+		if rc.QueryType != "" {
+			c.addf(path+".query_type", "query_type is only valid on %q checks", TypeDNS)
+		}
+		if rc.Resolver != nil {
+			c.addf(path+".resolver", "resolver is only valid on %q checks", TypeDNS)
+		}
+		chk.Address = resolveAddress(c, path, rc)
 	case TypeDNS:
 		rejectHTTPFields(c, path, rc)
 		chk.Host = resolveHost(c, path, rc, true)
@@ -806,9 +827,33 @@ func applyTypeDefaults(chk *Check, origin defaultOrigin, rc fileCheck) {
 	}
 }
 
+// resolveAddress reads the host:port a tcp check dials. A bare host is
+// rejected rather than guessed at: there is no sensible default port, and a
+// check that silently watched the wrong one would be worse than no check.
+func resolveAddress(c *collector, path string, rc fileCheck) string {
+	addr := strings.TrimSpace(rc.Address)
+	if addr == "" {
+		c.addf(path+".address", "address is required for %q checks, as host:port", TypeTCP)
+		return ""
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || host == "" || port == "" {
+		c.addf(path+".address", "%q is not host:port", addr)
+		return ""
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		c.addf(path+".address", "%q is not a port number", port)
+		return ""
+	}
+	return addr
+}
+
 func rejectHTTPFields(c *collector, path string, rc fileCheck) {
 	if strings.TrimSpace(rc.URL) != "" {
-		c.addf(path+".url", "url is for %q checks; use host or domain", TypeHTTP)
+		c.addf(path+".url", "url is for %q checks; use address, host or domain", TypeHTTP)
+	}
+	if strings.TrimSpace(rc.Address) != "" && rc.Type != string(TypeTCP) {
+		c.addf(path+".address", "address is only valid on %q checks", TypeTCP)
 	}
 	if rc.Method != nil {
 		// already reported in resolveCheck

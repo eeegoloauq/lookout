@@ -27,6 +27,7 @@ import (
 
 	"github.com/eeegoloauq/lookout/internal/alert"
 	"github.com/eeegoloauq/lookout/internal/config"
+	"github.com/eeegoloauq/lookout/internal/demo"
 	"github.com/eeegoloauq/lookout/internal/monitor"
 	"github.com/eeegoloauq/lookout/internal/probe"
 	"github.com/eeegoloauq/lookout/internal/web"
@@ -57,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return unmuteCmd(args[1:], stdout)
 	case "test-alert":
 		return testAlert(args[1:], stdout)
+	case "demo":
+		return demoCmd(args[1:], stdout)
 	case "version":
 		fmt.Fprintln(stdout, version())
 		return nil
@@ -84,6 +87,9 @@ commands:
                       lift an ad-hoc mute (scheduled windows stay)
   test-alert [config] send one message through the configured notifier
                       and exit; does not touch state or the outbox
+  demo [-listen addr] [-write file]
+                      serve the status page filled with synthetic data;
+                      probes nothing and reads no configuration
   version             print the build version
 
 The configuration defaults to `+defaultConfigPath+`.
@@ -435,6 +441,74 @@ func plural(n int, word string) string {
 	}
 	return fmt.Sprintf("%d %ss", n, word)
 }
+
+// demoCmd serves the page over invented data. It is how the screenshots in
+// the README are made and how a layout change gets looked at, and it means
+// nobody has to point a first install at their own infrastructure to find out
+// what lookout looks like.
+func demoCmd(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
+	fs.SetOutput(out)
+	addr := fs.String("listen", "127.0.0.1:5665", "address to serve the demo page on")
+	write := fs.String("write", "", "write the page to this file and exit instead of serving")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	dir, err := os.MkdirTemp("", "lookout-demo")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	m, err := demo.Monitor(dir, time.Now())
+	if err != nil {
+		return err
+	}
+	h := web.New(m, version())
+
+	if *write != "" {
+		rec := &bufferWriter{header: http.Header{}}
+		req, err := http.NewRequest(http.MethodGet, "/", nil)
+		if err != nil {
+			return err
+		}
+		h.ServeHTTP(rec, req)
+		if err := os.WriteFile(*write, rec.body.Bytes(), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, *write)
+		return nil
+	}
+
+	srv := &http.Server{Addr: *addr, Handler: h, ReadHeaderTimeout: 5 * time.Second}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
+
+	fmt.Fprintf(out, "demo data, nothing is being probed: http://%s\n", *addr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// bufferWriter is the smallest http.ResponseWriter that can capture a page.
+// Pulling in net/http/httptest for this would put a testing dependency in
+// the shipped binary.
+type bufferWriter struct {
+	header http.Header
+	body   bytes.Buffer
+}
+
+func (w *bufferWriter) Header() http.Header         { return w.header }
+func (w *bufferWriter) Write(p []byte) (int, error) { return w.body.Write(p) }
+func (w *bufferWriter) WriteHeader(int)             {}
 
 // version identifies the build the way someone asking "is this the one I
 // deployed" needs it: a released tag when there is one, otherwise the short

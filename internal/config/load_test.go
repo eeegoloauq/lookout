@@ -670,3 +670,89 @@ func TestTimezoneOverride(t *testing.T) {
 		t.Error("an unknown timezone must not load")
 	}
 }
+
+// A tcp check is the one for everything that listens without speaking HTTP.
+// Its address is the only thing it has, so the validator has to be strict
+// about it: a check watching the wrong port is worse than no check.
+func TestTCPCheckAddress(t *testing.T) {
+	cfg := mustLoad(t, `
+checks:
+  - name: Database
+    type: tcp
+    address: db.lan:5432
+`)
+	c := cfg.Checks[0]
+	if c.Type != TypeTCP || c.Address != "db.lan:5432" {
+		t.Fatalf("check = %+v", c)
+	}
+	if c.URL != "" || c.Host != "" {
+		t.Errorf("a tcp check picked up http or dns fields: %+v", c)
+	}
+}
+
+func TestTCPCheckRejectsBadAddresses(t *testing.T) {
+	for _, tc := range []struct{ name, want, src string }{
+		{"missing", "address is required", `
+checks:
+  - name: Database
+    type: tcp
+`},
+		{"bare host", "is not host:port", `
+checks:
+  - name: Database
+    type: tcp
+    address: db.lan
+`},
+		{"not a port", "is not a port number", `
+checks:
+  - name: Database
+    type: tcp
+    address: db.lan:postgres
+`},
+		{"url instead", "url is for", `
+checks:
+  - name: Database
+    type: tcp
+    address: db.lan:5432
+    url: http://db.lan:5432/
+`},
+		{"body condition", "body_contains is only valid", `
+checks:
+  - name: Database
+    type: tcp
+    address: db.lan:5432
+    expect:
+      body_contains: ready
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load("config.yaml", []byte(tc.src))
+			if err == nil {
+				t.Fatalf("accepted %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// The registration of a name is derived from wherever a host appears, and a
+// tcp address is a place a host appears.
+func TestTCPCheckDerivesRegistration(t *testing.T) {
+	cfg := mustLoad(t, `
+checks:
+  - name: Mail
+    type: tcp
+    address: mail.example.com:25
+`)
+	var derived []Check
+	for _, c := range cfg.Checks {
+		if c.Implicit {
+			derived = append(derived, c)
+		}
+	}
+	if len(derived) != 1 || derived[0].Host != "example.com" {
+		t.Fatalf("derived = %+v, want example.com", derived)
+	}
+}
