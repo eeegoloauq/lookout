@@ -303,7 +303,18 @@ func canonicalDNSName(s string) string {
 // zoneSnapshot is the comparable form stored in durable state. Rcode is
 // on the first line so NXDOMAIN and an empty NOERROR are distinct; answers
 // are sorted so record order is not a change.
+//
+// Only NOERROR and NXDOMAIN produce a snapshot, because only they say
+// something about the zone: these are the records, or the name is gone. A
+// SERVFAIL or REFUSED says the resolver could not answer, and snapshotting it
+// reports drift twice — once on the failure, once on the recovery — for a zone
+// nobody touched. A zone that is genuinely broken (a bad signature, a dead
+// authoritative server) still surfaces as a down check on the rcode condition,
+// which is the event that actually happened.
 func zoneSnapshot(rcode string, answers []string) string {
+	if rcode != "NOERROR" && rcode != "NXDOMAIN" {
+		return ""
+	}
 	sorted := append([]string(nil), answers...)
 	sort.Strings(sorted)
 	var b strings.Builder

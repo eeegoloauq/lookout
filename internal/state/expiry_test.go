@@ -157,6 +157,44 @@ checks:
 	}
 }
 
+// A resolver that could not answer arrives here with no snapshot (see
+// probe.zoneSnapshot). It must leave the baseline alone, or the recovery reads
+// as a second zone change.
+func TestFailedLookupKeepsZoneBaseline(t *testing.T) {
+	cfg, err := config.Load("config.yaml", []byte(`
+checks:
+  - name: MX
+    type: dns
+    host: service.example
+    query_type: MX
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.Checks[0]
+	m := NewMachine()
+
+	good := check.Result{
+		Name: c.Name, At: epoch, Outcome: check.OutcomeUp,
+		Rcode: "NOERROR", ZoneSnapshot: "NOERROR\nMX 10 mail.service.example.",
+	}
+	m.Observe(c, good)
+
+	servfail := check.Result{Name: c.Name, At: epoch.Add(5 * time.Minute), Outcome: check.OutcomeDown, Rcode: "SERVFAIL"}
+	if got := kinds(m.Observe(c, servfail)); got != "" {
+		t.Fatalf("servfail = %q, want none: one failed lookup is not a zone change", got)
+	}
+
+	back := good
+	back.At = epoch.Add(10 * time.Minute)
+	if got := kinds(m.Observe(c, back)); got != "" {
+		t.Fatalf("recovery = %q, want none: the records never moved", got)
+	}
+	if st, _ := m.State(c.Name); st.ZoneSnapshot != good.ZoneSnapshot {
+		t.Errorf("baseline = %q, want it untouched", st.ZoneSnapshot)
+	}
+}
+
 func TestDomainUnknownIsNotDownAndStalesAfterThreeDays(t *testing.T) {
 	cfg, err := config.Load("config.yaml", []byte(`
 checks:

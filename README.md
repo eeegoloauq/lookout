@@ -57,7 +57,9 @@ nothing but a port.
 
 **dns** — A, AAAA, MX, NS or TXT against a resolver you name. A lost UDP packet
 is retried rather than counted; a changed answer set is drift, and the first
-answer is a baseline rather than an alert.
+answer is a baseline rather than an alert. Drift is read off answers only — a
+resolver that returns SERVFAIL fails the check instead, because "I could not
+look it up" is not "the records moved".
 
 **TLS and domain expiry** come along for free. Certificate dates are read out of
 the handshake an `https` check already performs. Registration dates are worked

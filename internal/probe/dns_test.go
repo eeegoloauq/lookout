@@ -299,3 +299,28 @@ func TestZoneSnapshotSortsAnswers(t *testing.T) {
 		t.Errorf("snapshot = %q", got)
 	}
 }
+
+func TestZoneSnapshotOnlyForZoneAnswers(t *testing.T) {
+	if got := zoneSnapshot("NXDOMAIN", nil); got != "NXDOMAIN" {
+		t.Errorf("NXDOMAIN snapshot = %q, want the wipe to be comparable", got)
+	}
+	for _, rcode := range []string{"SERVFAIL", "REFUSED", "FORMERR", "RCODE9"} {
+		if got := zoneSnapshot(rcode, []string{"A 192.0.2.10"}); got != "" {
+			t.Errorf("%s snapshot = %q, want none: the resolver did not answer", rcode, got)
+		}
+	}
+}
+
+func TestDNSProbeServfailLeavesNoSnapshot(t *testing.T) {
+	addr, _ := startDNS(t, func(dnsmessage.Question) (dnsmessage.RCode, []dnsmessage.Resource) {
+		return dnsmessage.RCodeServerFailure, nil
+	})
+	c := dnsCheck(t, "    resolver: "+addr+"\n")
+	res := NewDNS().Probe(context.Background(), c)
+	if res.Outcome != check.OutcomeDown || res.Rcode != "SERVFAIL" {
+		t.Fatalf("outcome = %q rcode = %q, want a failed check", res.Outcome, res.Rcode)
+	}
+	if res.ZoneSnapshot != "" {
+		t.Errorf("snapshot = %q, want none: a SERVFAIL must not read as a zone change", res.ZoneSnapshot)
+	}
+}
