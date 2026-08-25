@@ -244,9 +244,10 @@ func serve(args []string, stderr io.Writer) error {
 	// that is about to be restored.
 	m.Restore()
 
+	buildVersion, buildSource := build()
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           web.New(m, version()),
+		Handler:           web.New(m, buildVersion, buildSource),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	httpErr := make(chan error, 1)
@@ -465,7 +466,8 @@ func demoCmd(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	h := web.New(m, version())
+	demoVersion, demoSource := build()
+	h := web.New(m, demoVersion, demoSource)
 
 	if *write != "" {
 		rec := &bufferWriter{header: http.Header{}}
@@ -523,9 +525,19 @@ func (w *bufferWriter) WriteHeader(int)             {}
 var pseudoVersion = regexp.MustCompile(`[-.]\d{14}-[0-9a-f]{12}(\+dirty)?$`)
 
 func version() string {
+	v, _ := build()
+	return v
+}
+
+// build returns what the footer prints and, when the binary was built from a
+// GitHub checkout, where that exact build can be read. The URL comes from the
+// module path, so a fork points at the fork rather than at us; a module path
+// hosted anywhere else gets no link instead of a guessed one, since only the
+// GitHub URL shape is known here.
+func build() (string, string) {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "unknown"
+		return "unknown", ""
 	}
 	rev, when, modified := "", "", false
 	for _, s := range info.Settings {
@@ -547,11 +559,26 @@ func version() string {
 	if tag == "(devel)" || pseudoVersion.MatchString(tag) {
 		tag = ""
 	}
+	link := ""
+	if repo, found := strings.CutPrefix(info.Main.Path, "github.com/"); found {
+		switch {
+		case tag != "":
+			link = "https://github.com/" + repo + "/releases/tag/" + tag
+		case rev != "":
+			link = "https://github.com/" + repo + "/commit/" + rev
+		}
+	}
+	// A tree with uncommitted changes is not any of the commits it links to,
+	// and a link that lies is worse than none.
+	if modified {
+		link = ""
+	}
+
 	switch {
 	case rev == "" && tag == "":
-		return "devel"
+		return "devel", link
 	case rev == "":
-		return tag
+		return tag, link
 	}
 	out := rev[:min(len(rev), 7)]
 	if tag != "" {
@@ -563,5 +590,5 @@ func version() string {
 	if modified {
 		out += " · uncommitted changes"
 	}
-	return out
+	return out, link
 }

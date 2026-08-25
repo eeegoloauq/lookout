@@ -30,6 +30,7 @@ const timelineBuckets = 48
 type pageView struct {
 	Title    string
 	Version  string
+	Source   string
 	Zone     string
 	CSS      template.CSS
 	Tally    string
@@ -206,6 +207,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	view := pageView{
 		Title:   "lookout",
 		Version: s.version,
+		Source:  s.source,
 		CSS:     template.CSS(pageCSS),
 		Tally:   tally(up, down, unknown, unstable),
 		When:    now.In(loc).Format("15:04:05"),

@@ -21,8 +21,8 @@ import (
 const APIVersion = 1
 
 // New returns the HTTP handler for every outward endpoint.
-func New(m *monitor.Monitor, version string) http.Handler {
-	s := &server{mon: m, version: version}
+func New(m *monitor.Monitor, version, source string) http.Handler {
+	s := &server{mon: m, version: version, source: source}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.page)
 	// Browsers request this on every visit; 204 is "we have no icon",
@@ -65,6 +65,10 @@ func localOnly(next http.HandlerFunc) http.HandlerFunc {
 type server struct {
 	mon     *monitor.Monitor
 	version string
+	// source is where this build can be read, or empty when the binary
+	// carries no usable provenance. The footer links the version only
+	// when it is set.
+	source string
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

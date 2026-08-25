@@ -101,7 +101,7 @@ func TestStatusAPIContract(t *testing.T) {
 	feed(t, m, "Photos", "UU", now.Add(-2*time.Minute), 42*time.Millisecond, 200)
 	feed(t, m, "Router", "DDD", now.Add(-time.Hour), 1500*time.Millisecond, 502)
 
-	h := New(m, "abc1234")
+	h := New(m, "abc1234", "")
 	rec := get(t, h, "/api/status")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
@@ -160,7 +160,7 @@ func TestStatusAPIContract(t *testing.T) {
 
 func TestStatusOmitsUptimeWhenThereAreNoSamples(t *testing.T) {
 	m := testMonitor(t, twoChecks)
-	h := New(m, "test")
+	h := New(m, "test", "")
 	rec := get(t, h, "/api/status")
 	var doc StatusDocument
 	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
@@ -182,7 +182,7 @@ func TestStatusOmitsUptimeWhenThereAreNoSamples(t *testing.T) {
 func TestCheckHistory(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UDU", time.Now().Add(-3*time.Minute), 10*time.Millisecond, 200)
-	h := New(m, "test")
+	h := New(m, "test", "")
 
 	rec := get(t, h, "/api/checks/Photos")
 	if rec.Code != http.StatusOK {
@@ -224,7 +224,7 @@ checks:
 `
 	m := testMonitor(t, src)
 	feed(t, m, "Private", "U", time.Now(), 5*time.Millisecond, 200)
-	h := New(m, "test")
+	h := New(m, "test", "")
 
 	leaks := []string{
 		"super-secret-password",
@@ -282,7 +282,7 @@ func TestMetricsCanonicalNames(t *testing.T) {
 	feed(t, m, "Photos", "UU", now.Add(-time.Minute), 42*time.Millisecond, 200)
 	feed(t, m, "Router", "DDD", now.Add(-time.Hour), time.Second, 500)
 
-	body := get(t, New(m, "test"), "/metrics").Body.String()
+	body := get(t, New(m, "test", ""), "/metrics").Body.String()
 	for _, want := range []string{
 		"# TYPE lookout_up gauge",
 		"# TYPE lookout_probe_success gauge",
@@ -344,7 +344,7 @@ checks:
 		DomainExpiresAt: expires, DomainSource: "rdap",
 	})
 
-	h := New(m, "test")
+	h := New(m, "test", "")
 	var doc StatusDocument
 	if err := json.Unmarshal(get(t, h, "/api/status").Body.Bytes(), &doc); err != nil {
 		t.Fatal(err)
@@ -374,7 +374,7 @@ checks:
 
 func TestMetricsOmitUnknownAndEmptyUptime(t *testing.T) {
 	m := testMonitor(t, twoChecks)
-	body := get(t, New(m, "test"), "/metrics").Body.String()
+	body := get(t, New(m, "test", ""), "/metrics").Body.String()
 	if strings.Contains(body, `lookout_up{`) {
 		t.Errorf("lookout_up must be absent while state is unknown:\n%s", body)
 	}
@@ -388,7 +388,7 @@ func TestMetricsOmitUnknownAndEmptyUptime(t *testing.T) {
 
 func TestHealthzOKByDefault(t *testing.T) {
 	m := testMonitor(t, twoChecks)
-	rec := get(t, New(m, "test"), "/healthz")
+	rec := get(t, New(m, "test", ""), "/healthz")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.Bytes())
 	}
@@ -416,7 +416,7 @@ func TestHealthzDegradedWhenOutboxIsStuck(t *testing.T) {
 	}
 	m.Restore()
 
-	rec := get(t, New(m, "test"), "/healthz")
+	rec := get(t, New(m, "test", ""), "/healthz")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503: %s", rec.Code, rec.Body.Bytes())
 	}
@@ -431,7 +431,7 @@ func TestHealthzDegradedWhenOutboxIsStuck(t *testing.T) {
 		t.Errorf("reason = %q", doc.Reason)
 	}
 
-	page := get(t, New(m, "test"), "/")
+	page := get(t, New(m, "test", ""), "/")
 	if !strings.Contains(page.Body.String(), "cannot notify") {
 		t.Errorf("status page must show a stuck outbox, got:\n%s", page.Body.String())
 	}
@@ -451,7 +451,7 @@ func TestHealthzStaysOKDuringTheBatchWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Restore()
-	rec := get(t, New(m, "test"), "/healthz")
+	rec := get(t, New(m, "test", ""), "/healthz")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("queued but not yet retried must not look sick: %d %s", rec.Code, rec.Body.Bytes())
 	}
@@ -503,7 +503,7 @@ checks:
 		done := make(chan error, 1)
 		go func() { done <- m.Run(ctx) }()
 		time.Sleep(10 * time.Minute)
-		rec := get(t, New(m, "test"), "/healthz")
+		rec := get(t, New(m, "test", ""), "/healthz")
 		cancel()
 		if err := <-done; err != nil {
 			t.Fatal(err)
@@ -524,7 +524,7 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
 	feed(t, m, "Router", "DDD", time.Now().Add(-time.Hour), time.Second, 500)
-	rec := get(t, New(m, "test"), "/")
+	rec := get(t, New(m, "test", ""), "/")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -575,7 +575,7 @@ func TestStatusPageIsSelfContained(t *testing.T) {
 
 func TestMuteAPIAndStatusVisibility(t *testing.T) {
 	m := testMonitor(t, twoChecks)
-	h := New(m, "test")
+	h := New(m, "test", "")
 
 	body := strings.NewReader(`{"for":"30m","group":"Services"}`)
 	rec := httptest.NewRecorder()
@@ -641,7 +641,7 @@ func TestMuteAPIAndStatusVisibility(t *testing.T) {
 }
 
 func TestMuteRejectsBadDuration(t *testing.T) {
-	h := New(testMonitor(t, twoChecks), "test")
+	h := New(testMonitor(t, twoChecks), "test", "")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, localPost("/api/mute", `{"for":"nope"}`))
 	if rec.Code != http.StatusBadRequest {
@@ -650,14 +650,14 @@ func TestMuteRejectsBadDuration(t *testing.T) {
 }
 
 func TestUnknownPathIs404(t *testing.T) {
-	rec := get(t, New(testMonitor(t, twoChecks), "test"), "/nope")
+	rec := get(t, New(testMonitor(t, twoChecks), "test", ""), "/nope")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status %d", rec.Code)
 	}
 }
 
 func TestFaviconIsSilent(t *testing.T) {
-	rec := get(t, New(testMonitor(t, twoChecks), "test"), "/favicon.ico")
+	rec := get(t, New(testMonitor(t, twoChecks), "test", ""), "/favicon.ico")
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status %d, want 204 so a browser tab does not log a 404", rec.Code)
 	}
@@ -668,7 +668,7 @@ func TestFaviconIsSilent(t *testing.T) {
 // address so a browser can open the page, and that must not hand every
 // host on the network a mute switch.
 func TestMutingIsRefusedFromTheNetwork(t *testing.T) {
-	h := New(testMonitor(t, twoChecks), "test")
+	h := New(testMonitor(t, twoChecks), "test", "")
 	for _, path := range []string{"/api/mute", "/api/unmute"} {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"for":"30m"}`))
 		req.RemoteAddr = "192.0.2.10:54321"
@@ -694,7 +694,7 @@ func TestPageGroupsAreHeadings(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
 	feed(t, m, "Router", "UU", time.Now(), 20*time.Millisecond, 200)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	for _, want := range []string{`scope="colgroup">Services`, `scope="colgroup">Core`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing group heading %q", want)
@@ -715,7 +715,7 @@ func TestPageRowOpensIntoDetail(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	now := time.Now()
 	feed(t, m, "Router", "DDD", now.Add(-30*time.Minute), 1500*time.Millisecond, 502)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	for _, want := range []string{
 		`<label for="t-c-`,
 		"watching",
@@ -796,7 +796,7 @@ func TestLastFailureSurvivesRecovery(t *testing.T) {
 	feed(t, m, "Photos", "DDDUU", now.Add(-10*time.Minute), 20*time.Millisecond, 503)
 
 	var doc StatusDocument
-	if err := json.Unmarshal(get(t, New(m, "test"), "/api/status").Body.Bytes(), &doc); err != nil {
+	if err := json.Unmarshal(get(t, New(m, "test", ""), "/api/status").Body.Bytes(), &doc); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	for _, c := range doc.Checks {
@@ -824,7 +824,7 @@ func TestLastFailureSurvivesRecovery(t *testing.T) {
 func TestPageLabelsItsColumns(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	for _, want := range []string{
 		"<table", "<thead>", "<caption",
 		`scope="col" class="c-nm">check<`,
@@ -845,7 +845,7 @@ func TestPageLabelsItsColumns(t *testing.T) {
 func TestPageLinksTheTarget(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if !strings.Contains(body, `<a href="http://photos.invalid/ping" rel="noreferrer noopener"`) {
 		t.Errorf("target is not a link:\n%s", body)
 	}
@@ -854,7 +854,7 @@ func TestPageLinksTheTarget(t *testing.T) {
 func TestPageShowsTheOutageLog(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UUDDDUU", time.Now().Add(-3*time.Hour), 20*time.Millisecond, 503)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if !strings.Contains(body, ">outages<") {
 		t.Errorf("no outage log on the page:\n%s", body)
 	}
@@ -868,12 +868,12 @@ func TestPageShowsTheOutageLog(t *testing.T) {
 func TestPageClockFollowsTheConfiguredZone(t *testing.T) {
 	m := testMonitor(t, "timezone: Europe/Moscow\n"+twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if !strings.Contains(body, "MSK") {
 		t.Errorf("page does not name the zone it is showing:\n%s", body)
 	}
 	var doc StatusDocument
-	if err := json.Unmarshal(get(t, New(m, "test"), "/api/status").Body.Bytes(), &doc); err != nil {
+	if err := json.Unmarshal(get(t, New(m, "test", ""), "/api/status").Body.Bytes(), &doc); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if doc.GeneratedAt.Location() != time.UTC {
@@ -933,7 +933,7 @@ checks:
 	m.Machine().Observe(c, res)
 	m.History().Record(res)
 
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if !strings.Contains(body, "expires 11 days") {
 		t.Errorf("domain row does not lead with the expiry:\n%s", body)
 	}
@@ -1073,7 +1073,7 @@ checks:
 	}
 
 	var doc StatusDocument
-	if err := json.Unmarshal(get(t, New(m, "test"), "/api/status").Body.Bytes(), &doc); err != nil {
+	if err := json.Unmarshal(get(t, New(m, "test", ""), "/api/status").Body.Bytes(), &doc); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	byName := map[string]CheckStatus{}
@@ -1087,7 +1087,7 @@ checks:
 		t.Error("an unrelated host borrowed someone else's registration")
 	}
 
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if !strings.Contains(body, "domain 11d") {
 		t.Errorf("site row carries no warning that its name is running out:\n%s", body)
 	}
@@ -1149,7 +1149,7 @@ func TestFailedSlotTooltipSaysWhenAndHowBad(t *testing.T) {
 func TestOpenRowIsNotClosedByTheReload(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if strings.Contains(body, "<details") || strings.Contains(body, ":target") {
 		t.Error("expansion still moves the page or closes on reload")
 	}
@@ -1178,10 +1178,31 @@ func TestOpenRowIsNotClosedByTheReload(t *testing.T) {
 // looks equally clickable and does nothing. A <label> cannot wrap table
 // cells, so the reach is a positioned pseudo-element and the row is its
 // containing block — both halves have to be present or neither works.
+// The footer names the build; when the binary knows where that build can be
+// read, the name is the way there. A build with no provenance — someone
+// else's tarball, a tree with local edits — prints the same text and links
+// nowhere, because a link to a commit this binary is not would be a lie.
+func TestFooterLinksTheBuildOnlyWhenItIsKnown(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	const src = "https://github.com/example/lookout/releases/tag/v9.9.9"
+	body := get(t, New(m, "v9.9.9 (abc1234)", src), "/").Body.String()
+	if !strings.Contains(body, `<a href="`+src+`"`) {
+		t.Errorf("footer does not link the build:\n%s", body)
+	}
+
+	body = get(t, New(m, "v9.9.9 (abc1234)", ""), "/").Body.String()
+	if strings.Contains(body, "releases/tag") || strings.Contains(body, "/commit/") {
+		t.Error("footer invented a link for a build with no provenance")
+	}
+	if !strings.Contains(body, "lookout v9.9.9 (abc1234)") {
+		t.Error("footer stopped naming the build")
+	}
+}
+
 func TestWholeRowOpensThePanel(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	for _, want := range []string{
 		".row { position: relative; }",
 		".nm label::after",
@@ -1225,7 +1246,7 @@ func TestPanelShowsTheAddressItConnectedTo(t *testing.T) {
 			Duration: 12 * time.Millisecond, StatusCode: 200, RemoteAddr: "203.0.113.9:443",
 		})
 	}
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if !strings.Contains(body, "connected") || !strings.Contains(body, "203.0.113.9:443") {
 		t.Errorf("panel does not say which address answered:\n%s", body)
 	}
@@ -1254,7 +1275,7 @@ checks:
 			DomainExpiresAt: now.Add(61*24*time.Hour + time.Hour),
 		})
 	}
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	if !strings.Contains(body, `scope="colgroup">Domains`) {
 		t.Errorf("registration_group did not produce a group:\n%s", body)
 	}
@@ -1270,7 +1291,7 @@ checks:
 func TestRowHasOneNamedControl(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 
 	if n := strings.Count(body, `for="t-c-photos"`); n != 1 {
 		t.Errorf("checkbox has %d labels, want exactly 1", n)

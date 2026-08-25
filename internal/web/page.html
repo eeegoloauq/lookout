@@ -101,7 +101,7 @@
 </table>
 {{end}}
 <footer>
-  <span>lookout {{.Version}}</span>
+  <span>{{if .Source}}<a href="{{.Source}}" rel="noreferrer noopener" target="_blank">lookout {{.Version}}</a>{{else}}lookout {{.Version}}{{end}}</span>
   <a href="/api/status">status json</a>
   <a href="/metrics">metrics</a>
 </footer>

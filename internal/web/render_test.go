@@ -23,7 +23,7 @@ func TestRenderDemoPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := get(t, New(m, "v0.1.0 (0000000) · 20 Aug 2026"), "/").Body.String()
+	body := get(t, New(m, "v0.1.0 (0000000) · 20 Aug 2026", ""), "/").Body.String()
 	if err := os.WriteFile("/tmp/lookout-page.html", []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestDemoBoardRenders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := get(t, New(m, "test"), "/").Body.String()
+	body := get(t, New(m, "test", ""), "/").Body.String()
 	for _, want := range []string{"Website API", "Domains", "example.com", "slowest 5%"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("demo page is missing %q", want)
