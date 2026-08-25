@@ -70,8 +70,8 @@
       <td class="wide {{.WideClass}}" colspan="3">{{.Wide}}</td>
       {{else}}
       <td class="num lat">{{.Latency}}</td>
-      <td class="num up24">{{.Uptime}}</td>
-      <td class="num ago">{{.Checked}}</td>
+      <td class="num up24{{if .UptimeQuiet}} quiet{{end}}">{{.Uptime}}</td>
+      <td class="num ago{{if .CheckedQuiet}} quiet{{end}}">{{.Checked}}</td>
       {{end}}
     </tr>
     <tr class="detail">

@@ -257,6 +257,14 @@ thead .c-nm { text-align: left; }
 .wide.soon { color: var(--flap); }
 .wide.bad { color: var(--down); font-weight: 650; }
 .num { text-align: right; color: var(--mute); font-size: 0.9rem; }
+
+/* A value that only confirms the norm — a full day of uptime, a probe that
+   landed on time — is still printed, because the board is evidence and the
+   number has to survive a screenshot, a grep and a screen reader. It is
+   printed quietly so that the row that departs from the norm is the row the
+   eye lands on. Opacity rather than a colour: it works in both themes and
+   cannot accidentally read as one of the four state colours. */
+.num.quiet { opacity: 0.45; }
 .ago { color: var(--mute); }
 
 .tag {

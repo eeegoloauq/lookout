@@ -1199,6 +1199,29 @@ func TestFooterLinksTheBuildOnlyWhenItIsKnown(t *testing.T) {
 	}
 }
 
+// The board is evidence before it is a dashboard: a value that only confirms
+// the norm is dimmed, never dropped, so a screenshot and a screen reader
+// still carry the number. Only the row that departs from the norm is printed
+// at full strength.
+func TestNormalValuesAreQuietButPresent(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", strings.Repeat("U", 20), time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test", ""), "/").Body.String()
+
+	if !strings.Contains(body, "100.0%") {
+		t.Error("a full day of uptime stopped being printed")
+	}
+	if !strings.Contains(body, `class="num up24 quiet"`) {
+		t.Errorf("100%% uptime is printed as loudly as an outage:\n%s", body)
+	}
+	if !strings.Contains(body, `class="num ago quiet"`) {
+		t.Error("a probe that landed on schedule is printed as loudly as a stalled one")
+	}
+	if !strings.Contains(body, ".num.quiet") {
+		t.Error("the stylesheet lost the rule that makes a confirmed norm quiet")
+	}
+}
+
 func TestWholeRowOpensThePanel(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)

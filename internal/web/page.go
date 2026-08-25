@@ -63,6 +63,11 @@ type pageRow struct {
 	Checked  string
 	Latency  string
 	Uptime   string
+	// UptimeQuiet and CheckedQuiet mark a value that says only "as
+	// expected": a full 24 hours, or a probe that landed on schedule. The
+	// cell still prints it, dimmed.
+	UptimeQuiet  bool
+	CheckedQuiet bool
 	// Wide replaces the latency and uptime columns for a check where they
 	// mean nothing — a registration is not "up 100% of the day", it runs
 	// out on a date.
@@ -163,12 +168,23 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 				Reason: inc.Reason,
 			})
 		}
+		// A healthy board said "100.0%" and "38s ago" on every row, which is
+		// two columns repeating the same "nothing to report" twenty times
+		// and an eye with nothing to catch. The values stay — the board is
+		// evidence, and a screenshot, a grep and a screen reader all want
+		// the number — but a value that only confirms the norm is printed
+		// quietly, so the one row that departs from it is the one that
+		// reads. Emptying the cells instead would have collided with "—",
+		// which already means "no data at all".
+		healthy := row.RowClass == "up" || row.RowClass == "valid"
 		if c.LastProbe != nil {
-			row.Checked = formatAgo(now, c.LastProbe.At)
 			row.Latency = formatLatency(time.Duration(c.LastProbe.DurationMS) * time.Millisecond)
+			row.Checked = formatAgo(now, c.LastProbe.At)
+			row.CheckedQuiet = healthy && onSchedule(now, c.LastProbe.At, time.Duration(c.IntervalMS)*time.Millisecond)
 		}
 		if c.Uptime24h != nil {
 			row.Uptime = formatRatio(c.Uptime24h.Ratio)
+			row.UptimeQuiet = healthy && c.Uptime24h.Ratio >= 1
 		}
 		row.Muted = c.Muted
 		if c.Muted {
@@ -715,6 +731,20 @@ func formatRatio(r float64) string {
 		return "99.9%"
 	}
 	return fmt.Sprintf("%.1f%%", pct)
+}
+
+// onSchedule reports whether a check probed recently enough that the
+// timestamp only confirms the schedule. Two intervals is the smallest window
+// that does not trip on one late probe — a probe may take almost its whole
+// timeout, and the scheduler drifts by design. The threshold decides how
+// loudly a value is printed and nothing else, so an imperfect guess costs
+// contrast rather than information. A check with no interval recorded is
+// never dimmed: with nothing to compare against, the timestamp is news.
+func onSchedule(now, at time.Time, interval time.Duration) bool {
+	if interval <= 0 {
+		return false
+	}
+	return now.Sub(at) <= 2*interval
 }
 
 func formatAgo(now, at time.Time) string {
