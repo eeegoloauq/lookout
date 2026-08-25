@@ -1,7 +1,8 @@
 # lookout
 
 A lightweight uptime monitor in Go. One static binary watches your services and
-tells you when one breaks.
+tells you when one breaks. On the machine it runs on here it holds 26 checks in
+about 20 MB of memory, on one core it barely wakes.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/board-light.png">
