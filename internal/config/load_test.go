@@ -24,7 +24,7 @@ func mustLoad(t *testing.T, src string) *Config {
 }
 
 // A check that says nothing about alerting must alert. This is the inverted
-// default of SPEC §1.1 and the reason lookout exists, so it is tested first.
+// default lookout exists for, so it is tested first.
 func TestAlertingDefaultsToOn(t *testing.T) {
 	cfg := mustLoad(t, minimal)
 	if !cfg.Checks[0].Alert {
@@ -324,7 +324,7 @@ func TestHeartbeatDefaultsToOff(t *testing.T) {
 	}
 }
 
-// 168h is the weekly cadence SPEC §12 names; the parser has to accept
+// 168h is the weekly heartbeat cadence; the parser has to accept
 // a duration that long, not just the short forms batch_window uses.
 func TestHeartbeatOverride(t *testing.T) {
 	cfg := mustLoad(t, minimal+"\nalerting:\n  heartbeat: 168h\n")

@@ -323,7 +323,7 @@ checks:
 }
 
 // Losing the state file must not produce a recovery for an outage this process
-// never announced (SPEC §9).
+// never announced.
 func TestLostStateFileProducesNoEvents(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg := testConfig(t, `
@@ -397,8 +397,9 @@ func (r *recordingNotifier) got() []string {
 }
 
 // A confirmed outage must become a delivered notification, not just a log
-// line. This is the half of SPEC §1.1 that "alert defaults to true" does
-// not cover: the alert is configured and still has to arrive.
+// line. This is the half of "silence must never be a bug" that "alert
+// defaults to true" does not cover: the alert is configured and still has
+// to arrive.
 func TestOutageIsDeliveredThroughTheNotifier(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg := testConfig(t, `

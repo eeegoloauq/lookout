@@ -7,7 +7,7 @@ import (
 
 // DefaultRcode is applied when a dns check declares no rcode expectation.
 // Without it a SERVFAIL would report "up", which is the silent-failure
-// mode SPEC §1.1 exists to prevent.
+// mode lookout exists to prevent.
 const DefaultRcode = "NOERROR"
 
 // KnownRcodes is the RCODE set a dns check may name, in IANA spelling.

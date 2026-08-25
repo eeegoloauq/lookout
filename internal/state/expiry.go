@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Numbered expiry tiers (SPEC §6). After the last one, notices are daily.
+// Numbered expiry tiers. After the last one, notices are daily.
 var (
 	CertTiers   = []int{21, 14, 7, 3}
 	DomainTiers = []int{60, 30, 14, 7}

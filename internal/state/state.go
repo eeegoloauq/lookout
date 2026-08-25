@@ -32,7 +32,7 @@ const (
 	StatusDown    Status = "down"
 )
 
-// CheckState is the durable state of one check (SPEC §9.1).
+// CheckState is the durable state of one check.
 type CheckState struct {
 	Status               Status `json:"status"`
 	ConsecutiveFailures  int    `json:"consecutive_failures,omitempty"`
@@ -73,7 +73,7 @@ type CheckState struct {
 	DownReminders int       `json:"down_reminders,omitempty"`
 
 	// ZoneSnapshot is the last decoded DNS answer set. The first
-	// successful decode is a baseline, not a drift (SPEC §5.5).
+	// successful decode is a baseline, not a drift.
 	ZoneSnapshot   string    `json:"zone_snapshot,omitempty"`
 	ZoneSnapshotAt time.Time `json:"zone_snapshot_at,omitzero"`
 
@@ -86,7 +86,7 @@ type CheckState struct {
 
 	// Domain expiry from RDAP or WHOIS. UnknownSince is when the
 	// registry stopped answering; a stale-source alert fires only after
-	// DomainStaleAfter (SPEC §5.4).
+	// DomainStaleAfter.
 	DomainExpiresAt    time.Time `json:"domain_expires_at,omitzero"`
 	DomainFreeDate     time.Time `json:"domain_free_date,omitzero"`
 	DomainState        string    `json:"domain_state,omitempty"`
@@ -142,7 +142,7 @@ type Snapshot struct {
 	// Outbox is the undelivered alert queue. It lives in this file so a state
 	// change and the notification it must produce are persisted together:
 	// surviving a restart with "already down" and no queued alert is the
-	// failure SPEC §1.1 exists to prevent.
+	// failure this design exists to prevent.
 	Outbox Outbox `json:"outbox"`
 
 	// Registry is the cached IANA RDAP bootstrap and WHOIS referrals.
@@ -157,12 +157,12 @@ type Snapshot struct {
 
 	// Days is the in-progress UTC-day accumulator per check, written
 	// so a restart at 23:00 does not lose the day. Flushed to the
-	// JSONL history file at midnight (SPEC §9.3).
+	// JSONL history file at midnight.
 	Days map[string]DayAcc `json:"days,omitempty"`
 
 	// LastHeartbeat is when the still-alive message was last queued.
 	// Durable so a restart cannot turn a weekly ping into one per boot,
-	// and a week of downtime cannot queue seven of them (SPEC §12).
+	// and a week of downtime cannot queue seven of them.
 	LastHeartbeat time.Time `json:"last_heartbeat,omitzero"`
 	// ClosedSinceHeartbeat is how many confirmed recoveries have been
 	// recorded since LastHeartbeat. Capped incident logs would under-count
@@ -205,7 +205,7 @@ type DayAcc struct {
 
 // RegistryCache is the weekly RDAP bootstrap plus any WHOIS servers we
 // have already asked IANA for. A hard-coded TLD table would go stale
-// silently; this is the live equivalent (SPEC §5.4).
+// silently; this is the live equivalent.
 type RegistryCache struct {
 	RDAPFetchedAt time.Time         `json:"rdap_fetched_at,omitzero"`
 	RDAP          map[string]string `json:"rdap,omitempty"`  // tld → base URL

@@ -108,7 +108,7 @@ func TestStoreDegradesToEmptyState(t *testing.T) {
 	}
 }
 
-// SPEC §9: no loss of state may cause a false alert, in either direction.
+// No loss of state may cause a false alert, in either direction.
 func TestLosingTheStateFileProducesNoFalseAlerts(t *testing.T) {
 	c := testCheck()
 	s := tempStore(t)

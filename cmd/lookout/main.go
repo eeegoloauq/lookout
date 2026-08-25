@@ -98,7 +98,7 @@ The configuration defaults to `+defaultConfigPath+`.
 
 // validate is the guard the rest of the program relies on: a configuration
 // that passes here cannot fail later for a reason that could have been seen
-// up front (SPEC §1.5).
+// up front.
 func validate(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(out)

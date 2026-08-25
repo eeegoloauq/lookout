@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for a new lookout release daily
+
+[Timer]
+OnCalendar=daily
+# Nothing about an update is urgent, and a fleet that all wakes at 00:00
+# hits the same release URL at the same second.
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

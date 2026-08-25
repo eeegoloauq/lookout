@@ -1,0 +1,130 @@
+#!/bin/sh
+# Update a systemd-managed lookout to the latest published release.
+#
+# It refuses to leave a broken monitor behind: the new binary has to load the
+# running config before anything is replaced, and it has to answer /healthz
+# after the restart or the previous binary goes back and the service is
+# restarted again. A monitor that is down tells you nothing, and it does not
+# tell you loudly.
+#
+# Everything below is overridable from the environment, so a second instance or
+# a fork's fleet needs no edit:
+#
+#   REPO         GitHub owner/name to fetch releases from
+#   BIN          path of the installed binary
+#   CONFIG       config the new binary is validated against
+#   SERVICE      systemd unit to restart
+#   HEALTH_URL   URL that must answer after the restart
+#   BACKUP_DIR   where the replaced binaries are kept (last 3)
+#   RELEASES     base URL the release assets are fetched from, for a fork that
+#                publishes elsewhere or a host that reaches an internal mirror
+#                rather than github.com
+#
+# Usage: lookout-update [--force] [--tag vX.Y.Z] [--dry-run]
+set -eu
+
+REPO=${REPO:-eeegoloauq/lookout}
+BIN=${BIN:-/usr/bin/lookout}
+CONFIG=${CONFIG:-/etc/lookout/config.yaml}
+SERVICE=${SERVICE:-lookout}
+HEALTH_URL=${HEALTH_URL:-http://127.0.0.1:5665/healthz}
+BACKUP_DIR=${BACKUP_DIR:-/var/backups/lookout}
+HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-30}
+RELEASES=${RELEASES:-https://github.com/$REPO/releases}
+
+force=no
+dryrun=no
+tag=
+
+while [ $# -gt 0 ]; do
+	case $1 in
+	--force) force=yes ;;
+	--dry-run) dryrun=yes ;;
+	--tag) shift; tag=${1:-} ;;
+	-h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	*) echo "unknown argument: $1" >&2; exit 2 ;;
+	esac
+	shift
+done
+
+log() { echo "lookout-update: $*"; }
+die() { echo "lookout-update: $*" >&2; exit 1; }
+
+fetch() { wget -q -O "$2" "$1"; }
+
+# The tag comes out of the redirect /releases/latest performs, which costs no
+# API quota and needs no JSON parser on the host.
+latest_tag() {
+	wget -q -S --spider --max-redirect=0 "$RELEASES/latest" 2>&1 |
+		sed -n 's|.*[Ll]ocation:.*/releases/tag/\([^ ]*\).*|\1|p' | tr -d '\r' | head -1
+}
+
+case $(uname -m) in
+x86_64) arch=amd64 ;;
+aarch64|arm64) arch=arm64 ;;
+*) die "no published binary for $(uname -m)" ;;
+esac
+
+[ -n "$tag" ] || tag=$(latest_tag)
+[ -n "$tag" ] || die "could not determine the latest release of $REPO"
+
+installed=$([ -x "$BIN" ] && "$BIN" version 2>/dev/null || echo "")
+case $installed in
+"$tag "*|"$tag")
+	if [ "$force" = no ]; then
+		log "$tag is already installed ($installed)"
+		exit 0
+	fi
+	;;
+esac
+
+log "installed: ${installed:-none}"
+log "release:   $tag"
+[ "$dryrun" = no ] || exit 0
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+asset=lookout-linux-$arch
+base=$RELEASES/download/$tag
+
+fetch "$base/$asset" "$tmp/$asset" || die "downloading $asset failed"
+fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" || die "downloading SHA256SUMS failed"
+(cd "$tmp" && grep " $asset\$" SHA256SUMS | sha256sum -c -) >/dev/null ||
+	die "checksum mismatch on $asset — refusing to install"
+chmod +x "$tmp/$asset"
+
+# Pre-flight: a config the new binary rejects is a failed update, not a
+# restart loop discovered at 2am.
+"$tmp/$asset" validate "$CONFIG" >/dev/null || die "$tag rejects $CONFIG — nothing was changed"
+
+mkdir -p "$BACKUP_DIR"
+backup=$BACKUP_DIR/lookout-$(date +%Y%m%d%H%M%S)
+cp -p "$BIN" "$backup"
+log "previous binary saved as $backup"
+
+install -m 0755 "$tmp/$asset" "$BIN"
+systemctl restart "$SERVICE"
+
+healthy=no
+i=0
+while [ "$i" -lt "$HEALTH_TIMEOUT" ]; do
+	if wget -q -O /dev/null --timeout=3 "$HEALTH_URL"; then
+		healthy=yes
+		break
+	fi
+	sleep 1
+	i=$((i + 1))
+done
+
+if [ "$healthy" = no ]; then
+	log "$HEALTH_URL did not answer within ${HEALTH_TIMEOUT}s — rolling back"
+	install -m 0755 "$backup" "$BIN"
+	systemctl restart "$SERVICE"
+	die "rolled back to $("$BIN" version 2>/dev/null || echo "the previous binary")"
+fi
+
+# Keep three, which is enough to step back past a bad release and not enough
+# to be a disk problem.
+ls -1t "$BACKUP_DIR"/lookout-* 2>/dev/null | tail -n +4 | xargs -r rm -f
+
+log "now running $("$BIN" version)"

@@ -8,7 +8,7 @@ import (
 // DefaultOutboxLimit is how many undelivered items the queue will hold as
 // individual events. Past that the oldest items are folded into a Summary
 // rather than dropped: a full disk or a long Telegram outage must not become
-// a silent hole in the alert history (SPEC §6).
+// a silent hole in the alert history.
 const DefaultOutboxLimit = 128
 
 // Outbox is the durable queue of alerts that have been decided but not yet

@@ -24,7 +24,7 @@ const (
 	// paths and substring matches; a monitor must not be made to allocate a
 	// gigabyte by a target that misbehaves.
 	maxBody = 512 << 10
-	// sampleBytes is how much of the body an alert carries (SPEC §6).
+	// sampleBytes is how much of the body an alert carries.
 	sampleBytes = 200
 )
 
@@ -55,7 +55,7 @@ func Transport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.DisableKeepAlives = true
 	// Probes ignore HTTP_PROXY and friends. The set of hosts lookout talks to
-	// is closed and explicit (SPEC §1.3); an inherited proxy variable would
+	// is closed and explicit; an inherited proxy variable would
 	// silently reroute every probe and make a green check meaningless.
 	t.Proxy = nil
 	return t
@@ -233,7 +233,7 @@ func transportError(err error, timeout time.Duration) string {
 }
 
 // redact strips credentials that Go embeds in *url.Error messages, so that a
-// URL carrying a token never reaches a log line or an alert (SPEC §11).
+// URL carrying a token never reaches a log line or an alert.
 func redact(err error) string {
 	var uerr *url.Error
 	if errors.As(err, &uerr) {

@@ -60,7 +60,7 @@ type CheckStatus struct {
 	// "no data", not as failure.
 	LastProbe *ProbeView `json:"last_probe"`
 	// Uptime24h is null when the ring has no samples: 0 would look like
-	// a total outage and 1 would look like perfect health (SPEC §9.2).
+	// a total outage and 1 would look like perfect health.
 	Uptime24h *UptimeView `json:"uptime_24h"`
 	// Incident is null unless the check is in a confirmed outage.
 	Incident *IncidentView `json:"incident"`
@@ -169,7 +169,7 @@ type HistoryDocument struct {
 	Points  []HistoryPoint `json:"points"`
 }
 
-// HistoryPoint is one sample from the ring buffer (SPEC §9.2).
+// HistoryPoint is one sample from the ring buffer.
 type HistoryPoint struct {
 	At         time.Time `json:"at"`
 	OK         bool      `json:"ok"`

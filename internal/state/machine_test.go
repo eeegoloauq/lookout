@@ -119,7 +119,7 @@ func TestDownEventCarriesTheFailingResult(t *testing.T) {
 	if e.Check != "Example" || e.Group != "Services" {
 		t.Errorf("event identifies %q/%q, want Example/Services", e.Check, e.Group)
 	}
-	// A check that says nothing about alerting must alert (SPEC §1.1).
+	// A check that says nothing about alerting must alert.
 	if !e.Alert {
 		t.Error("event.Alert = false for a check with no explicit alert:")
 	}

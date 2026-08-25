@@ -12,7 +12,7 @@ import (
 // Malformed is deliberately separate from Down: a response that no longer has
 // the field we assert on means the other side changed its API, which is not the
 // same event as the service being unavailable and must not read the same in an
-// alert (SPEC §4).
+// alert.
 type Outcome string
 
 const (
@@ -21,7 +21,7 @@ const (
 	OutcomeMalformed Outcome = "malformed"
 	// OutcomeUnknown means the probe could not tell: a registry that did
 	// not answer, not a domain that is down. It must not count as a
-	// failure or a success (SPEC §5.4).
+	// failure or a success.
 	OutcomeUnknown Outcome = "unknown"
 )
 
@@ -68,7 +68,7 @@ type Result struct {
 	ZoneSnapshot string `json:"zone_snapshot,omitempty"`
 
 	// CertNotAfter is the leaf certificate's expiry, captured from the
-	// TLS handshake of an https check (SPEC §5.3). Zero when there was
+	// TLS handshake of an https check. Zero when there was
 	// no certificate — including a failed handshake that never sent one.
 	CertNotAfter time.Time `json:"cert_not_after,omitzero"`
 

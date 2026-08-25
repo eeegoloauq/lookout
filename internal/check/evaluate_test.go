@@ -77,7 +77,7 @@ func TestEvaluate(t *testing.T) {
 		},
 		{
 			// A missing field is a changed API, not an outage: it must read
-			// differently from "the service is down" (SPEC §4).
+			// differently from "the service is down".
 			name:        "body path missing",
 			expect:      "    expect:\n      body:\n        \".result.source.reachable\": true\n",
 			resp:        Response{StatusCode: 200, Body: []byte(body)},

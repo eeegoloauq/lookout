@@ -124,7 +124,7 @@ func evaluateBody(want []config.BodyExpect, resp Response) ([]Failure, bool) {
 		got, found := be.Path.Lookup(doc)
 		if !found {
 			// A path that does not resolve is a changed response format, not a
-			// failing service. It reads differently in an alert (SPEC §4).
+			// failing service. It reads differently in an alert.
 			failures = append(failures, Failure{
 				Condition: "body " + be.Path.String(),
 				Want:      render(be.Want),

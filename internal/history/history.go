@@ -1,5 +1,5 @@
 // Package history keeps the recent result history of every check in memory:
-// a fixed ring per check, holding the last 24 hours (SPEC §9.2).
+// a fixed ring per check, holding the last 24 hours.
 //
 // The ring is the source of truth while lookout is running. A JSONL seed
 // file is replayed into the rings on start so a restart does not blank the

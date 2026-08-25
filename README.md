@@ -123,6 +123,26 @@ systemctl enable --now lookout
 Point `state.file` and its neighbours at `/var/lib/lookout/`, or
 `ProtectSystem=strict` will not let lookout write them.
 
+### Staying current
+
+`contrib/lookout-update` moves an installed lookout to the latest release. It
+fetches the published binary and `SHA256SUMS`, refuses to install on a checksum
+mismatch, refuses to install a binary that will not load the running config,
+and — if the restarted service does not answer `/healthz` — puts the previous
+binary back and restarts again. The three most recent binaries it replaced stay
+in `/var/backups/lookout`.
+
+```sh
+install -o root -g root -m 0755 contrib/lookout-update /usr/local/bin/
+lookout-update            # or --dry-run to see what it would do
+```
+
+`REPO`, `BIN`, `CONFIG`, `SERVICE`, `HEALTH_URL`, `BACKUP_DIR` and `RELEASES`
+are read from the environment, so a fork or a second instance needs no edit.
+For unattended updates, install `contrib/systemd/lookout-update.{service,timer}`
+and `systemctl enable --now lookout-update.timer`; it runs daily with a couple
+of hours of jitter.
+
 ## Limits worth knowing
 
 Every probe leaves from the machine lookout runs on. If that machine is the one

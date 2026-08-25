@@ -21,7 +21,7 @@ import (
 const (
 	// ianaBootstrapURL is the official TLD → RDAP map. Public
 	// aggregators such as rdap.org are a redirector on the critical
-	// path and are not used (SPEC §1.3, §5.4).
+	// path and are not used.
 	ianaBootstrapURL = "https://data.iana.org/rdap/dns.json"
 	ianaWHOISAddr    = "whois.iana.org:43"
 	bootstrapTTL     = 7 * 24 * time.Hour
@@ -100,7 +100,7 @@ func cloneRegistry(c state.RegistryCache) state.RegistryCache {
 
 // Probe looks up the registered name. A registry that does not answer is
 // OutcomeUnknown, never Down: "I could not ask" is not "the domain fell
-// over" (SPEC §5.4).
+// over".
 func (d *Domain) Probe(ctx context.Context, c config.Check) check.Result {
 	res := check.Result{Name: c.Name, At: d.now()}
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)

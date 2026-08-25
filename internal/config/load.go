@@ -1249,7 +1249,7 @@ func method(c *collector, path, raw string) (string, bool) {
 var envRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // expand substitutes ${VAR} from the environment. Secrets live in the
-// environment, never in the config file (SPEC §3, §11), so an unset variable is
+// environment, never in the config file, so an unset variable is
 // a hard error: silently sending an empty Authorization header would turn a
 // deployment mistake into a permanently failing check.
 func expand(c *collector, path, s string) (string, bool) {

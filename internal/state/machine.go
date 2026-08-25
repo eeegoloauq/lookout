@@ -49,11 +49,11 @@ const (
 	// EventDelegated is the matching recovery: DELEGATED came back.
 	EventDelegated EventKind = "delegated"
 	// EventHeld is the digest of alerts that fired while a mute was
-	// on. They are not dropped (SPEC §1.1); they leave as one
+	// on. They are not dropped; they leave as one
 	// message when the mute lifts.
 	EventHeld EventKind = "held"
 	// EventHeartbeat is lookout saying it is still running. Without it a
-	// dead process is indistinguishable from a quiet homelab (SPEC §12).
+	// dead process is indistinguishable from a quiet homelab.
 	EventHeartbeat EventKind = "heartbeat"
 )
 
@@ -146,7 +146,7 @@ func (m *Machine) SetReminders(d []time.Duration) {
 type entry struct {
 	CheckState
 	// recent is a bitmask of the last results, newest in bit 0, 1 meaning
-	// failure. It is deliberately not durable (SPEC §9.1 lists what is): losing
+	// failure. It is deliberately not durable: losing
 	// it can only delay an instability notice, never invent one.
 	recent uint64
 	seen   int

@@ -6,7 +6,7 @@ import (
 )
 
 // RedactSecrets strips credentials that a response body or an error string
-// might echo, so they cannot leak into a log line or an alert (SPEC §11).
+// might echo, so they cannot leak into a log line or an alert.
 // The patterns target authorization headers and bearer tokens, not every
 // field named "password": over-redacting turns a useful body sample into
 // noise, and the founding requirement is that an alert still explains
@@ -31,10 +31,10 @@ var (
 )
 
 // MaskURL redacts userinfo from a URL so a status page or API response
-// cannot leak credentials that were written into the URL itself
-// (SPEC §11). Authorization headers are simply never serialized; this
-// is the remaining leak. The host and path stay visible so the check
-// is still identifiable.
+// cannot leak credentials that were written into the URL itself.
+// Authorization headers are simply never serialized; this is the
+// remaining leak. The host and path stay visible so the check is still
+// identifiable.
 func MaskURL(raw string) string {
 	if raw == "" {
 		return raw

@@ -14,7 +14,7 @@ import (
 	"github.com/eeegoloauq/lookout/internal/state"
 )
 
-// Daily is one JSON Lines record: one check, one UTC day (SPEC §9.3).
+// Daily is one JSON Lines record: one check, one UTC day.
 type Daily struct {
 	Date      string  `json:"date"`
 	Check     string  `json:"check"`

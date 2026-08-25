@@ -14,7 +14,7 @@ import (
 )
 
 // Built-in defaults. A configuration that sets nothing still behaves sanely,
-// and alerting is on unless a check opts out (SPEC §1.1).
+// and alerting is on unless a check opts out.
 const (
 	DefaultInterval         = 60 * time.Second
 	DefaultTimeout          = 5 * time.Second
@@ -37,8 +37,7 @@ const (
 	//
 	// DefaultListen is loopback only. The status page and API are for the
 	// machine that runs lookout, not the network; publishing them is a
-	// deliberate listen: override (SPEC §11, and the task's stricter
-	// reading of "LAN" as the loopback default).
+	// deliberate listen: override.
 	DefaultListen = "127.0.0.1:5665"
 
 	// MaxReminders bounds the still-down schedule. A schedule longer than
@@ -50,7 +49,7 @@ const (
 	// already a vacation, not a maintenance window.
 	MaxAdhocMute = 7 * 24 * time.Hour
 
-	// Type-specific intervals (SPEC §5). HTTP keeps DefaultInterval;
+	// Type-specific intervals. HTTP keeps DefaultInterval;
 	// DNS and domain checks are cheaper to run slowly than to hammer
 	// a resolver or a registry.
 	DefaultDNSInterval    = 5 * time.Minute
@@ -62,13 +61,13 @@ const (
 	DomainMinInterval = time.Hour
 
 	// Telegram credentials live in the environment, never in the config file
-	// (SPEC §6, §11). Empty values are treated as missing.
+	//. Empty values are treated as missing.
 	EnvTelegramToken  = "LOOKOUT_TELEGRAM_TOKEN"
 	EnvTelegramChatID = "LOOKOUT_TELEGRAM_CHAT_ID"
 
 	// DefaultStatus is applied when a check declares no status expectation. A
 	// check that asserts nothing would report "up" for a 500, which is the
-	// silent-failure mode SPEC §1.1 exists to prevent.
+	// silent-failure mode lookout exists to prevent.
 	DefaultStatus = "200-299"
 )
 
@@ -118,7 +117,7 @@ type Config struct {
 	Checks            []Check
 }
 
-// MuteWindow is a recurring quiet period (SPEC §8). Probes keep running;
+// MuteWindow is a recurring quiet period. Probes keep running;
 // only delivery is suppressed. The spec names a cron expression; we take
 // a weekday list and a clock instead — see the series notes for why.
 type MuteWindow struct {
@@ -131,13 +130,13 @@ type MuteWindow struct {
 	Check    string
 }
 
-// Alerting is the notification pipeline (SPEC §6, §7). Token and chat id are
+// Alerting is the notification pipeline. Token and chat id are
 // deliberately not here: they come from the environment so a copied config
 // cannot leak them.
 type Alerting struct {
 	// Mode selects the transport. "none" is the only way to run without
 	// notifications: silence has to be asked for, never inherited from a
-	// missing section (SPEC §1.1). It exists so that a monitor whose
+	// missing section. It exists so that a monitor whose
 	// credentials went missing is a configuration error, while a monitor
 	// that is deliberately page-only still starts.
 	Mode        Mode
@@ -179,7 +178,7 @@ type Telegram struct {
 	Proxy string
 }
 
-// Check is one resolved check (SPEC §4).
+// Check is one resolved check.
 type Check struct {
 	Name    string
 	Group   string
@@ -220,7 +219,7 @@ type Check struct {
 	Instability      Instability
 }
 
-// Instability configures the "N of the last M" detector (SPEC §6). A single
+// Instability configures the "N of the last M" detector. A single
 // success resets a consecutive-failure counter, so alternating up/down never
 // reaches FailureThreshold no matter how bad availability is; this window is
 // what catches that pattern.

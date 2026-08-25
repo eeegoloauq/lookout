@@ -85,7 +85,7 @@ func start(t *testing.T, p *Pipeline) (cancel func()) {
 }
 
 // A dead channel must not drop an alert, and a restart must still have
-// every event that was queued (SPEC §6, §13).
+// every event that was queued.
 func TestDeadChannelLosesNoAlertAndSurvivesRestart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		n := &fakeNotifier{err: errors.New("telegram unreachable")}

@@ -2,7 +2,7 @@
 //
 // Events are written to a durable outbox first and only removed after the
 // notifier confirms delivery. A monitor that can lose a notification is a
-// monitor whose silence cannot be trusted (SPEC §1.1, §6).
+// monitor whose silence cannot be trusted.
 package alert
 
 import "context"

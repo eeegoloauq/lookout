@@ -19,7 +19,7 @@ const telegramMaxRunes = 4096
 
 // Format renders a batch of events as one plain-text message.
 //
-// The shape is fixed (SPEC §6). One emoji, at the very start of the message,
+// The shape is fixed. One emoji, at the very start of the message,
 // for the worst thing in it. A single event is a headline plus at most two
 // supporting lines. A batch is a counting headline, a blank line, and one
 // line per event, worst first. Group names, per-event glyphs and field

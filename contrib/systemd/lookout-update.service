@@ -1,0 +1,12 @@
+[Unit]
+Description=Update lookout to the latest published release
+Documentation=file:///usr/share/doc/lookout/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root, because it replaces the binary and restarts the unit. The update
+# script does the checking: checksum, then the config, then /healthz, and it
+# puts the previous binary back if the new one does not answer.
+ExecStart=/usr/local/bin/lookout-update

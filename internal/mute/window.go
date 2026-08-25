@@ -1,4 +1,4 @@
-// Package mute decides whether a check is in a quiet window (SPEC §8).
+// Package mute decides whether a check is in a quiet window.
 //
 // Two sources feed it: static windows from the config, and ad-hoc holds
 // created at runtime. Probes always run; this package only answers

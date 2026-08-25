@@ -38,7 +38,7 @@ const (
 
 // Telegram delivers messages through the Bot API. Token and chat id come
 // only from the constructor — never from a config file — so a copied
-// YAML cannot leak them (SPEC §6, §11).
+// YAML cannot leak them.
 type Telegram struct {
 	token  string
 	chatID string
@@ -89,7 +89,7 @@ func (t *Telegram) SetAPI(base string) { t.api = strings.TrimRight(base, "/") }
 func telegramTransport(proxyURL string) (*http.Transport, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	// Inherited HTTP_PROXY would silently reroute Telegram and is not the
-	// SOCKS5 path the target network actually needs (SPEC §1.3, §6).
+	// SOCKS5 path the target network actually needs.
 	tr.Proxy = nil
 	if strings.TrimSpace(proxyURL) == "" {
 		return tr, nil

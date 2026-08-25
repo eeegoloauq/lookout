@@ -21,7 +21,7 @@ import (
 const (
 	// dnsAttempts is why this probe exists as its own type. One lost UDP
 	// datagram is not an outage; Gatus treated it as one, and that is
-	// the failure this retry budget is here to stop (SPEC §5.2).
+	// the failure this retry budget is here to stop.
 	dnsAttempts = 3
 	// maxDNSResponse is well above a classic 512-byte UDP payload and
 	// above a typical EDNS 1232-byte one. Anything larger is not a
