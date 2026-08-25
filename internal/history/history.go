@@ -18,8 +18,10 @@ import (
 const Retention = 24 * time.Hour
 
 // MaxPoints caps a single ring, so a check configured with a very short
-// interval cannot grow the process without bound.
-const MaxPoints = 1440
+// interval cannot grow the process without bound. It sits above the 1440
+// points a 60s check puts into 24 hours, because a ring also has to hold
+// the off-beat probes described in CapacityFor.
+const MaxPoints = 1600
 
 // Point is one recorded probe result.
 type Point struct {
@@ -30,12 +32,22 @@ type Point struct {
 }
 
 // CapacityFor returns the ring size that covers Retention at this interval,
-// which is 1440 points at the default 60s.
+// plus headroom, which is 1585 points at the default 60s.
+//
+// The headroom is not slack for its own sake. Probes do not arrive only on
+// the beat: every restart runs its checks immediately, so each one lands a
+// point or two off the cadence. A ring sized to the exact beat count has to
+// evict one genuinely old point for every extra one, and the window it
+// still holds slides under 24 hours — a minute per restart, permanently,
+// because nothing ever gives that minute back. The oldest slot of the bar
+// is the one that pays, and it goes grey while every probe in it ran.
+// Ten per cent absorbs about seventy restarts in a day.
 func CapacityFor(interval time.Duration) int {
 	if interval <= 0 {
 		return MaxPoints
 	}
 	n := int((Retention + interval - 1) / interval)
+	n += n/10 + 1
 	return min(max(n, 1), MaxPoints)
 }
 

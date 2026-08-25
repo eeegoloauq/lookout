@@ -19,10 +19,12 @@ func TestCapacityFor(t *testing.T) {
 		interval time.Duration
 		want     int
 	}{
-		{time.Minute, 1440},
-		{5 * time.Minute, 288},
-		{time.Hour, 24},
-		{25 * time.Hour, 1},
+		// Retention at the interval, plus a tenth of it as headroom for
+		// probes that land off the beat (a restart runs its checks at once).
+		{time.Minute, 1585},
+		{5 * time.Minute, 317},
+		{time.Hour, 27},
+		{25 * time.Hour, 2},
 		{time.Second, MaxPoints}, // capped: 86400 points per check is not a homelab
 		{0, MaxPoints},
 	}
