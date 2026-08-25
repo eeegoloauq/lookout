@@ -1190,6 +1190,22 @@ func TestOpenRowIsNotClosedByTheReload(t *testing.T) {
 // read, the name is the way there. A build with no provenance — someone
 // else's tarball, a tree with local edits — prints the same text and links
 // nowhere, because a link to a commit this binary is not would be a lie.
+// A cell that spans every column feeds its own width back into those
+// columns: the panel's longest line was widening the name column by a few
+// pixels, so the board twitched sideways whenever a row was opened. The
+// panel is a block sized by the table, which is what stops that.
+func TestOpeningARowDoesNotMoveTheColumns(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test", ""), "/").Body.String()
+	if !strings.Contains(body, `<div class="panel">`) {
+		t.Error("the detail panel is no longer a block of its own")
+	}
+	if !strings.Contains(body, "width: 0;") || !strings.Contains(body, "min-width: 100%;") {
+		t.Error("the panel lost the sizing that keeps it out of the table's column widths")
+	}
+}
+
 func TestFooterLinksTheBuildOnlyWhenItIsKnown(t *testing.T) {
 	m := testMonitor(t, twoChecks)
 	const src = "https://github.com/example/lookout/releases/tag/v9.9.9"

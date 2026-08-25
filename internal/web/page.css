@@ -308,6 +308,14 @@ thead .c-nm { text-align: left; }
 
 /* The expanded panel answers the three questions a red row raises: what was
    watched, what it said, and how it has behaved for the last day. */
+/* Zero width for the table's sizing pass, full width for the eye: this is
+   what stops the panel from widening the columns of the row it belongs to.
+   Setting it on the cell would not do — a cell is sized by the table. */
+.panel {
+  width: 0;
+  min-width: 100%;
+}
+
 .detail td {
   /* The status cell carries the row's colour on its left border; the detail
      cell repeats it so the stripe runs down the side of the panel and binds

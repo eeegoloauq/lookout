@@ -76,6 +76,12 @@
     </tr>
     <tr class="detail">
       <td colspan="5">
+      <!-- The panel lives in its own block because a cell spanning every
+           column feeds its width back into the columns: opening a row with a
+           long URL in it pushed the check names a few pixels right, and the
+           board twitched under the pointer. The block is sized by the table
+           instead of the other way round. -->
+      <div class="panel">
       {{if .Timeline}}
       <!-- title= serves the mouse and nothing else: a phone, a keyboard and
            a screen reader all get zero from forty-eight bare rectangles. The
@@ -93,6 +99,7 @@
         </dd>
         {{end}}
       </dl>
+      </div>
       </td>
     </tr>
     {{end}}
