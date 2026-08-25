@@ -367,7 +367,10 @@ checks:
 	// A certificate expiry lives in the HTTP row's detail panel, spelled
 	// out; a registration is the domain row's headline number.
 	page := get(t, h, "/").Body.String()
-	if !strings.Contains(page, "certificate in ") || !strings.Contains(page, "expires 44 days") {
+	// The days are set in their own box so a group of domains lines up, so
+	// the headline is "expires" and "44 days" with markup between them.
+	if !strings.Contains(page, "certificate in ") ||
+		!strings.Contains(page, "expires <span class=\"daysleft\">44 days</span>") {
 		t.Errorf("status page missing expiry:\n%s", page)
 	}
 }
@@ -934,8 +937,13 @@ checks:
 	m.History().Record(res)
 
 	body := get(t, New(m, "test", ""), "/").Body.String()
-	if !strings.Contains(body, "expires 11 days") {
+	if !strings.Contains(body, "expires <span class=\"daysleft\">11 days</span>") {
 		t.Errorf("domain row does not lead with the expiry:\n%s", body)
+	}
+	// The box is what lines the dates of a Domains group up; without the
+	// rule the markup is there and the column is ragged again.
+	if !strings.Contains(body, ".daysleft {") || !strings.Contains(body, "min-width: 12ch") {
+		t.Error("the stylesheet lost the fixed box the days are set in")
 	}
 	if !strings.Contains(body, `<a href="https://site.invalid"`) {
 		t.Errorf("domain row has no link to the name it watches:\n%s", body)
@@ -1302,7 +1310,7 @@ checks:
 	if !strings.Contains(body, `scope="colgroup">Domains`) {
 		t.Errorf("registration_group did not produce a group:\n%s", body)
 	}
-	if !strings.Contains(body, "expires 61 days") {
+	if !strings.Contains(body, "expires <span class=\"daysleft\">61 days</span>") {
 		t.Errorf("the derived row does not show its date:\n%s", body)
 	}
 }

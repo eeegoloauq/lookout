@@ -73,6 +73,11 @@ type pageRow struct {
 	// out on a date.
 	Wide      string
 	WideClass string
+	// WideDays and WideWhen split the registration line so the four rows of
+	// a Domains group line up: the remaining days are set in a fixed box,
+	// which puts every separator and every date on one edge.
+	WideDays string
+	WideWhen string
 	// Badge is a short warning that rides next to the name: the site is
 	// answering fine, but the name it lives on runs out next week.
 	Badge      string
@@ -197,7 +202,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			row.BarSummary = barSummary(row.Timeline)
 		}
 		if c.Type == "domain" {
-			row.Wide = registrationSummary(c, loc)
+			row.Wide, row.WideDays, row.WideWhen = registrationSummary(c, loc)
 			row.WideClass = expiryUrgency(c.DomainDaysLeft)
 		}
 		row.Badge, row.BadgeClass = registrationBadge(c)
@@ -265,24 +270,28 @@ func sparse(c CheckStatus) bool {
 // registrationSummary is what a domain row shows instead of a response time
 // and a 24-hour uptime: neither says anything about a name that is either
 // registered until a date or not.
-func registrationSummary(c CheckStatus, loc *time.Location) string {
+// registrationSummary returns the lead word, the remaining days and the date,
+// separately, because the page sets the days in a fixed box: "48 days" and
+// "370 days" are different lengths, and joined into one sentence they put
+// every date in a Domains group at a different place on the line.
+func registrationSummary(c CheckStatus, loc *time.Location) (lead, days, when string) {
 	if c.DomainDaysLeft == nil {
 		if c.DomainLookupUnknown {
-			return "registry silent"
+			return "registry silent", "", ""
 		}
-		return "not looked up yet"
+		return "not looked up yet", "", ""
 	}
-	out := "expires " + formatDays(*c.DomainDaysLeft)
+	days = formatDays(*c.DomainDaysLeft)
 	if c.DomainExpires != nil {
-		when := c.DomainExpires.In(loc)
+		at := c.DomainExpires.In(loc)
 		// The year is only worth its width when it is not this one.
 		layout := "2 Jan"
-		if when.Year() != time.Now().In(loc).Year() {
+		if at.Year() != time.Now().In(loc).Year() {
 			layout = "2 Jan 2006"
 		}
-		out += " · " + when.Format(layout)
+		when = at.Format(layout)
 	}
-	return out
+	return "expires", days, when
 }
 
 // expiryUrgency colours the date on a row that is otherwise green: a

@@ -254,6 +254,16 @@ thead .c-nm { text-align: left; }
   white-space: nowrap;
 }
 
+/* The days left are set in a fixed box, wide enough for the longest thing
+   that goes in it ("370 days ago"), and right-aligned inside it. That is
+   what puts the separator and the date of every domain on one edge; joined
+   as plain text they land wherever the number's width leaves them. */
+.daysleft {
+  display: inline-block;
+  min-width: 12ch;
+  text-align: right;
+}
+
 .wide.soon { color: var(--flap); }
 .wide.bad { color: var(--down); font-weight: 650; }
 .num { text-align: right; color: var(--mute); font-size: 0.9rem; }
