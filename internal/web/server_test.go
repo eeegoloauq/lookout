@@ -1173,6 +1173,26 @@ func TestOpenRowIsNotClosedByTheReload(t *testing.T) {
 	}
 }
 
+// The label is the row, not the six characters of its name: a board where
+// only the text opens the panel reads as broken, since the rest of the row
+// looks equally clickable and does nothing. A <label> cannot wrap table
+// cells, so the reach is a positioned pseudo-element and the row is its
+// containing block — both halves have to be present or neither works.
+func TestWholeRowOpensThePanel(t *testing.T) {
+	m := testMonitor(t, twoChecks)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	body := get(t, New(m, "test"), "/").Body.String()
+	for _, want := range []string{
+		".row { position: relative; }",
+		".nm label::after",
+		"inset: 0;",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q: the row is clickable only on the name", want)
+		}
+	}
+}
+
 func TestSlugsAreStableAndSafe(t *testing.T) {
 	for name, want := range map[string]string{
 		"Photos":             "c-photos",

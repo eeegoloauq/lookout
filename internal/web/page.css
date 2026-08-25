@@ -183,6 +183,20 @@ thead .c-nm { text-align: left; }
 
 .nm label { cursor: pointer; }
 
+/* The whole row opens it, not just the name. A <label> cannot wrap table
+   cells, so it reaches across the row as a transparent pseudo-element
+   positioned against the row itself. Everything the row draws — the state,
+   the numbers, the note — stays visible underneath and stays unclickable,
+   which it already was. The detail row is a sibling and outside this box,
+   so the links inside an open panel are unaffected. */
+.row { position: relative; }
+.nm label::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
 /* The checkbox itself is never seen: it is the row's state, not a control
    of its own. It stays focusable, so a row opens from the keyboard, and the
    ring is drawn on the name, which is the thing being operated. */
