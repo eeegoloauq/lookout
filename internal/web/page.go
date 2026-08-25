@@ -525,6 +525,7 @@ func timeline(points []history.Point, now time.Time, interval time.Duration) []p
 		firstFail, lastFail time.Time
 	}
 	buckets := make([]acc, timelineBuckets)
+	loc := now.Location()
 	for _, p := range points {
 		// Slots are counted back from now, not forward from a truncated
 		// start: anchoring at the start left the newest half hour in a
@@ -540,19 +541,31 @@ func timeline(points []history.Point, now time.Time, interval time.Duration) []p
 			b.ok++
 		} else {
 			b.bad++
-			if b.firstFail.IsZero() || p.At.Before(b.firstFail) {
-				b.firstFail = p.At
+			// In the page's timezone, like every other clock on the page:
+			// the slot labels below are built from now, which is already
+			// local, while a probe carries UTC.
+			at := p.At.In(loc)
+			if b.firstFail.IsZero() || at.Before(b.firstFail) {
+				b.firstFail = at
 			}
-			if p.At.After(b.lastFail) {
-				b.lastFail = p.At
+			if at.After(b.lastFail) {
+				b.lastFail = at
 			}
 		}
 		if p.Duration > 0 {
 			b.ms = append(b.ms, p.Duration.Milliseconds())
 			if p.Duration > b.worst {
-				b.worst, b.worstAt = p.Duration, p.At
+				b.worst, b.worstAt = p.Duration, p.At.In(loc)
 			}
 		}
+	}
+	// The record starts where it starts. The slot that contains the first
+	// point is only partly covered by history, and demanding a full slot's
+	// worth of probes from it marks the left edge of the bar as a gap on
+	// every check that has not been running for a full day yet.
+	var oldest time.Time
+	if len(points) > 0 {
+		oldest = points[0].At
 	}
 	out := make([]pageBucket, timelineBuckets)
 	for i, b := range buckets {
@@ -577,7 +590,7 @@ func timeline(points []history.Point, now time.Time, interval time.Duration) []p
 				}
 				lines = append(lines, fail)
 			}
-		} else if want := expectedProbes(interval, slot); want > 0 && total < want-1 {
+		} else if want := expectedProbes(interval, covered(from, slot, oldest)); want > 0 && total < want-1 {
 			// Saying "32 ok" over a green slot tells a reader that green
 			// means ok. The count is only news when it falls short, and
 			// then it is news about lookout: probes that never ran mean
@@ -608,6 +621,15 @@ func timeline(points []history.Point, now time.Time, interval time.Duration) []p
 		out[i] = pageBucket{Class: class, Title: strings.Join(lines, "\n")}
 	}
 	return out
+}
+
+// covered is how much of a slot the record actually reaches back into: the
+// whole slot, unless the oldest point held falls inside it.
+func covered(from time.Time, slot time.Duration, oldest time.Time) time.Duration {
+	if oldest.IsZero() || !oldest.After(from) {
+		return slot
+	}
+	return from.Add(slot).Sub(oldest)
 }
 
 // expectedProbes is how many probes a slot should hold at this check's

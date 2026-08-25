@@ -990,6 +990,14 @@ func TestTimelineSlotsCarryTheirNumbers(t *testing.T) {
 func TestTimelineShowsProbesThatNeverRan(t *testing.T) {
 	now := time.Now()
 	var points []history.Point
+	// An hour of history before the thin slot, so the slot is short
+	// against a record that reaches past it and not against its own start.
+	for i := 90; i > 30; i-- {
+		points = append(points, history.Point{
+			At: now.Add(-time.Duration(i) * time.Minute), Outcome: check.OutcomeUp,
+			Duration: 5 * time.Millisecond,
+		})
+	}
 	// Ten probes where thirty were due.
 	for i := 10; i > 0; i-- {
 		points = append(points, history.Point{
@@ -1007,6 +1015,55 @@ func TestTimelineShowsProbesThatNeverRan(t *testing.T) {
 	}
 	if got := barSummary(buckets); !strings.Contains(got, "probes missing") {
 		t.Errorf("bar summary = %q", got)
+	}
+}
+
+// The oldest slot on the bar is half covered by the record on a monitor
+// that has not been up for a full day, and on every monitor once a restart
+// has pushed a few off-beat probes through a full ring. Both are the edge
+// of what lookout knows, not a half hour it slept through, and marking
+// them grey puts a permanent fault on a bar that has none.
+func TestTimelineDoesNotCallTheStartOfTheRecordAGap(t *testing.T) {
+	now := time.Now()
+	slot := history.Retention / timelineBuckets
+	start := now.Add(-history.Retention).Add(slot / 2)
+	var points []history.Point
+	for at := start; at.Before(now); at = at.Add(time.Minute) {
+		points = append(points, history.Point{
+			At: at, Outcome: check.OutcomeUp, Duration: 5 * time.Millisecond,
+		})
+	}
+	buckets := timeline(points, now, time.Minute)
+	if buckets[0].Class != "o" {
+		t.Errorf("oldest slot class = %q, want the healthy class: %q", buckets[0].Class, buckets[0].Title)
+	}
+	if strings.Contains(buckets[0].Title, "probes ran") {
+		t.Errorf("oldest slot counts probes against a full slot: %q", buckets[0].Title)
+	}
+}
+
+// Every clock on the page is in the operator's timezone. A tooltip that
+// labels a slot in local time and then times the worst probe inside it in
+// UTC reads as a probe from a different afternoon.
+func TestTimelineTooltipClocksMatchTheSlot(t *testing.T) {
+	loc := time.FixedZone("MSK", 3*60*60)
+	now := time.Date(2026, 8, 25, 21, 30, 0, 0, loc)
+	var points []history.Point
+	for i := 20; i > 0; i-- {
+		out, dur := check.OutcomeUp, 5*time.Millisecond
+		if i == 5 {
+			out, dur = check.OutcomeDown, 900*time.Millisecond
+		}
+		points = append(points, history.Point{
+			At: now.Add(-time.Duration(i) * time.Minute).UTC(), Outcome: out, Duration: dur,
+		})
+	}
+	last := timeline(points, now, time.Minute)[timelineBuckets-1]
+	if !strings.Contains(last.Title, "21:00–21:30") {
+		t.Fatalf("slot label = %q", last.Title)
+	}
+	if !strings.Contains(last.Title, "failing 21:25") {
+		t.Errorf("failure clock is not the slot's clock: %q", last.Title)
 	}
 }
 
