@@ -9,6 +9,7 @@
   --panel: #dfe6ee;
   --ink: #1b2430;
   --mute: #5a6878;
+  --faint: #97a4b2;
   --rule: #c3ced9;
   --up: #0f6b45;
   --down: #b42318;
@@ -28,6 +29,7 @@
     --panel: #161d25;
     --ink: #dce4ed;
     --mute: #8b98a6;
+    --faint: #5c6977;
     --rule: #2a343f;
     --up: #3dcc86;
     --down: #ff6d63;
@@ -272,9 +274,13 @@ thead .c-nm { text-align: left; }
    landed on time — is still printed, because the board is evidence and the
    number has to survive a screenshot, a grep and a screen reader. It is
    printed quietly so that the row that departs from the norm is the row the
-   eye lands on. Opacity rather than a colour: it works in both themes and
-   cannot accidentally read as one of the four state colours. */
-.num.quiet { opacity: 0.45; }
+   eye lands on.
+   A colour, and never opacity: opacity below 1 makes the cell a stacking
+   context, which paints it above the transparent label that makes the whole
+   row clickable. The row then opened everywhere except on the cells that
+   were dimmed — the quiet ones swallowed the click and the loud one next to
+   them did not. */
+.num.quiet { color: var(--faint); }
 .ago { color: var(--mute); }
 
 .tag {

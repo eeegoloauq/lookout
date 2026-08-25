@@ -1225,8 +1225,14 @@ func TestNormalValuesAreQuietButPresent(t *testing.T) {
 	if !strings.Contains(body, `class="num ago quiet"`) {
 		t.Error("a probe that landed on schedule is printed as loudly as a stalled one")
 	}
-	if !strings.Contains(body, ".num.quiet") {
+	if !strings.Contains(body, ".num.quiet { color:") {
 		t.Error("the stylesheet lost the rule that makes a confirmed norm quiet")
+	}
+	// Opacity here is a trap: it makes the cell a stacking context, which
+	// paints it over the transparent label that makes the row clickable,
+	// and the dimmed cells stop opening the row.
+	if strings.Contains(body, ".num.quiet { opacity") {
+		t.Error("the quiet cells are dimmed with opacity and no longer open the row")
 	}
 }
 
