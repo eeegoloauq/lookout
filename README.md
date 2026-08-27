@@ -1,7 +1,6 @@
 # lookout
 
-A lightweight uptime monitor in Go. One static binary watches your services and
-tells you when one breaks. Here it watches 26 checks in about 20 MB.
+A lightweight uptime monitor in Go: HTTP, TCP and DNS checks, a status page, Telegram alerts.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/board-light.png">
@@ -14,9 +13,8 @@ tells you when one breaks. Here it watches 26 checks in about 20 MB.
 go run github.com/eeegoloauq/lookout/cmd/lookout@latest demo
 ```
 
-That serves the board above on `127.0.0.1:5665` filled with invented data.
-Nothing is probed and no configuration is read, so you can see what it looks
-like before deciding whether you want it.
+The board above on `127.0.0.1:5665`, filled with invented data. Nothing is
+probed and no configuration is read.
 
 ## Run it
 
@@ -41,49 +39,44 @@ docker run -d --name lookout \
 Configuration is one YAML file, and `config.example.yaml` is its reference:
 every option is in it with a comment saying what it is for. `validate` reports
 every problem at once with the line each one is on, and `run` refuses to start
-on a config that does not pass — a monitor that dies at 2am because of a typo
-is a monitor that was not watching.
+on a config that does not pass.
 
 ## What it checks
 
 **http** — status code, response time, a substring of the body, or a JSON path
-compared against a value. If a body path stops resolving, the check reports
-`malformed` rather than `down`, because an API that changed shape is not an
-outage and should not read like one.
+compared against a value. A body path that stops resolving reports `malformed`
+rather than `down`.
 
-**tcp** — dials a `host:port` and hangs up without sending anything. This is
-the check for a database, a broker, an SSH daemon, or a container that exposes
-nothing but a port.
+**tcp** — dials a `host:port` and hangs up without sending anything: a
+database, a broker, an SSH daemon, a container that exposes nothing but a port.
 
 **dns** — A, AAAA, MX, NS or TXT against a resolver you name. A lost UDP packet
-is retried rather than counted; a changed answer set is drift, and the first
-answer is a baseline rather than an alert. Drift is read off answers only — a
-resolver that returns SERVFAIL fails the check instead, because "I could not
-look it up" is not "the records moved".
+is retried rather than counted, and a changed answer set is reported as drift
+against the first answer seen. SERVFAIL fails the check instead of counting as
+drift.
 
-**TLS and domain expiry** come along for free. Certificate dates are read out of
-the handshake an `https` check already performs. Registration dates are worked
-out from the names your checks already point at — no second block of config —
-and looked up once a day over RDAP, or WHOIS where there is no RDAP.
+**TLS and domain expiry** — certificate dates are read out of the handshake an
+`https` check already performs, and registration dates are looked up once a day
+over RDAP (WHOIS where there is no RDAP) for the names your checks already
+point at. Neither needs a second block of config.
 
 ## When something breaks
 
 A check goes down after a few consecutive failures and comes back after a few
-consecutive successes; both counts are yours to set. There is a second detector
-for the service that alternates rather than fails, since a consecutive counter
-never notices that one.
+consecutive successes; both counts are yours to set. A second detector catches
+the service that alternates rather than fails, which a consecutive counter
+never sees.
 
 The message goes to Telegram. Everything that changed within a short window
-leaves as one message rather than fifteen, an outage that stays open repeats on
-a schedule you choose, and once a week lookout says it is still alive so that
-silence stays meaningful. Every event is written to a durable queue before
-anything tries to send it, and leaves that queue only once Telegram confirms it
-arrived.
+leaves as one message, an outage that stays open repeats on a schedule you
+choose, and once a week lookout reports that it is still running. Every event
+is written to a durable queue before anything tries to send it, and leaves that
+queue only once Telegram confirms it arrived.
 
 Quiet hours are a schedule in the config, or `lookout mute --for 2h --group
 Public` when you are about to break something on purpose. Probes keep running
-either way; only delivery stops, and what happened while you were away arrives
-as one summary when the mute lifts.
+either way; only delivery stops, and what happened during the mute arrives as
+one summary when it lifts.
 
 ## The page
 
@@ -92,15 +85,13 @@ as one summary when the mute lifts.
   <img alt="A check expanded to show why it failed" src="docs/detail-dark.png">
 </picture>
 
-Every row opens into what the check watches, when it broke, what it said, uptime
-over three windows, how the response time is spread, and a bar of the last
-24 hours. It is server-rendered HTML with no framework, no external font, no
-icon set and nothing loaded from a CDN, which is the point: a status page that
-goes blank when the network does is not a status page.
+Every row opens into what the check watches, when it broke, what it said,
+uptime over three windows, how the response time is spread, and a bar of the
+last 24 hours. It is server-rendered HTML with no framework and nothing loaded
+from a CDN.
 
 Alongside it, `/api/status` is versioned JSON, `/metrics` is Prometheus text,
-and `/healthz` returns 503 when alerts are piling up undelivered — a monitor
-that cannot tell you anything should look broken from the outside.
+and `/healthz` returns 503 when alerts are piling up undelivered.
 
 ## Deploying
 
@@ -127,10 +118,9 @@ Point `state.file` and its neighbours at `/var/lib/lookout/`, or
 
 `contrib/lookout-update` moves an installed lookout to the latest release. It
 fetches the published binary and `SHA256SUMS`, refuses to install on a checksum
-mismatch, refuses to install a binary that will not load the running config,
-and — if the restarted service does not answer `/healthz` — puts the previous
-binary back and restarts again. The three most recent binaries it replaced stay
-in `/var/backups/lookout`.
+mismatch or a binary that will not load the running config, and puts the
+previous binary back if the restarted service does not answer `/healthz`. The
+three most recent binaries it replaced stay in `/var/backups/lookout`.
 
 ```sh
 install -o root -g root -m 0755 contrib/lookout-update /usr/local/bin/
@@ -143,25 +133,23 @@ For unattended updates, install `contrib/systemd/lookout-update.{service,timer}`
 and `systemctl enable --now lookout-update.timer`; it runs daily with a couple
 of hours of jitter.
 
-## Limits worth knowing
+## Limits
 
-Every probe leaves from the machine lookout runs on. If that machine is the one
-that is down, nobody is watching — an external monitor is a different job and
-lookout does not pretend to do it.
+Every probe leaves from the machine lookout runs on, so it cannot see its own
+host go down; an external monitor is a different job.
 
-Notifications go to Telegram and nowhere else. There is no web UI for adding a
-check; the config is in git, and a check that exists only inside a running
-process is one nobody can review or restore.
+Notifications go to Telegram and nowhere else. Checks are added by editing the
+config, not through the page.
 
-The status page renders without JavaScript, which means a row opens through a
-checkbox and `:has()`. A browser without `:has()` shows the whole board and
-never opens a row: the detail is out of reach, nothing else is.
+The status page renders without JavaScript, so a row opens through a checkbox
+and `:has()`. A browser without `:has()` shows the whole board and never opens
+a row.
 
 ## Contributing
 
-`docs/design.md` explains why the parts that look strange are the way they are —
-no database, no keep-alives, no third status. Read it before proposing a change
-to one of them.
+`docs/design.md` covers the decisions that look strange from outside: no
+database, no keep-alives, two statuses instead of three. Read it before
+proposing a change to one of them.
 
 ```sh
 go vet ./... && go test -race ./...
