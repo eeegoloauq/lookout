@@ -1,0 +1,44 @@
+# The pre-merge check, and the only thing this repository asks of the local
+# runner: pull requests live in Forgejo, so the gate has to be here. Everything
+# after the merge — main, tags, releases, publishing — runs on GitHub, where the
+# copy of this file in .github/workflows does the same work for free.
+#
+# NB: because this directory exists, Forgejo ignores .github/workflows entirely.
+name: ci
+
+on:
+  pull_request
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the running check pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+      - run: go test -race ./...
+      - run: CGO_ENABLED=0 go build ./cmd/lookout
+      # The example config is documentation, and documentation that does not
+      # load is worse than none. LOOKOUT_BASIC_AUTH stands in for the secret
+      # the example reads from the environment.
+      - name: validate the example config
+        run: LOOKOUT_BASIC_AUTH=x go run ./cmd/lookout validate config.example.yaml
