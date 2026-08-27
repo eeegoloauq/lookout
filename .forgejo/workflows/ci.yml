@@ -20,11 +20,12 @@ concurrency:
 jobs:
   check:
     runs-on: docker
-    # The toolchain comes from the image and the module cache and build cache
-    # live in named volumes: on one self-hosted runner they can simply stay on
+    # The image carries the toolchain and a node binary — actions/checkout is a
+    # JavaScript action and dies without one. The module cache and the build
+    # cache live in named volumes: on one self-hosted runner they can simply stay on
     # disk between runs, with no archive to pack, upload and unpack every time.
     container:
-      image: golang:1.26-bookworm
+      image: local/go-ci:latest
       volumes:
         - ci-go-mod:/go/pkg/mod
         - ci-go-build:/root/.cache/go-build
