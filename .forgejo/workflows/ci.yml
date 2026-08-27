@@ -19,13 +19,17 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: docker
+    # The toolchain comes from the image and the module cache and build cache
+    # live in named volumes: on one self-hosted runner they can simply stay on
+    # disk between runs, with no archive to pack, upload and unpack every time.
+    container:
+      image: golang:1.26-bookworm
+      volumes:
+        - ci-go-mod:/go/pkg/mod
+        - ci-go-build:/root/.cache/go-build
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
       # staticcheck is not here on purpose: it compiles from source on every run,
       # which is twelve minutes on this runner. GitHub runs it after the merge.
       - run: go vet ./...
