@@ -70,3 +70,20 @@ public.
 
 Commit messages are a sentence saying what changed and why, in English, present
 tense, no prefix tags. Look at `git log` before writing one.
+
+## Releases
+
+A release is a tag. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`, and the
+release body is the annotated tag's own message with the commit list GitHub
+generates appended under it. A lightweight tag, or `-m ""`, therefore ships a
+release with no note at all — the message is written at tag time, and it is public
+the moment the workflow finishes.
+
+Write it for someone who runs this, not for someone reading the diff: what changed
+in behaviour, and what they have to do on upgrade. The generated commit list below
+already covers the tree, so repeating it there is waste.
+
+The generated half always spans from the previous tag, whatever its level. A major
+does not roll its minors up: tag `v2.0.0` after `v1.4.0` and the list covers
+`v1.4.0..v2.0.0` and nothing before it. If a major should read as a summary of the
+whole line, that summary goes in the tag message by hand — nothing infers it.
