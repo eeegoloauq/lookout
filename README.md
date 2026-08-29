@@ -86,9 +86,9 @@ one summary when it lifts.
 </picture>
 
 Every row opens into what the check watches, when it broke, what it said,
-uptime over three windows, how the response time is spread, and a bar of the
-last 24 hours. It is server-rendered HTML with no framework and nothing loaded
-from a CDN.
+uptime over three windows, how the response time is spread, a month of days
+one square each, and a bar of the last 24 hours. It is server-rendered HTML
+with no framework and nothing loaded from a CDN.
 
 Alongside it, `/api/status` is versioned JSON, `/metrics` is Prometheus text,
 and `/healthz` returns 503 when alerts are piling up undelivered.
