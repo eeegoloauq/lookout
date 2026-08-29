@@ -15,6 +15,7 @@ import (
 
 	"github.com/eeegoloauq/lookout/internal/check"
 	"github.com/eeegoloauq/lookout/internal/config"
+	"github.com/eeegoloauq/lookout/internal/history"
 	"github.com/eeegoloauq/lookout/internal/monitor"
 )
 
@@ -155,10 +156,106 @@ func seed(m *monitor.Monitor, now time.Time) {
 	feed(m, "Website API", up(day-35), start, 60*time.Millisecond, 200)
 	malformed(m, "Website API", 35, start.Add((day-35)*time.Minute), 58*time.Millisecond)
 
+	// The month strip. Only the last day of it comes out of the probes
+	// above, and a strip that is grey everywhere else would demonstrate the
+	// opposite of what it is for: that a bad Tuesday is still visible three
+	// weeks later. Each check gets the past it implies — the flapper has
+	// had bad days before, the boring ones have not.
+	seedMonth(m, now)
+
 	certExpiry(m, "Vault", now, 12)
 	certExpiry(m, "Website", now, 74)
 	registration(m, "example.com", now, 11)
 	registration(m, "example.org", now, 213)
+}
+
+// monthCheck is one check's normal day: how many probes it lands and how
+// long they usually take. The month is drawn from this, so a day in the
+// strip carries the same numbers a day of probes would have.
+type monthCheck struct {
+	name    string
+	samples int
+	typical int64
+	slowest int64
+}
+
+var monthChecks = []monthCheck{
+	{"Router", day, 12, 19},
+	{"Proxy", day, 2, 4},
+	{"Vault", day, 30, 41},
+	{"Music", day, 44, 58},
+	{"Database", day, 1, 2},
+	{"Website MX", 288, 7, 12},
+	{"Photos", day, 38, 52},
+	{"Git", day, 4, 9},
+	{"Website", day, 74, 96},
+	{"Website API", day, 60, 88},
+}
+
+// badDay is a day in the strip that is not clean. Every one of them carries
+// the reason it went wrong: a square that can only say "something happened
+// here" raises the question and then refuses to answer it.
+type badDay struct {
+	check   string
+	daysAgo int
+	uptime  float64
+	outages int
+	reason  string
+}
+
+var monthStory = []badDay{
+	// Today, which has to agree with the day bar under it: the same four
+	// checks that are failing in the last 24 hours are the ones whose last
+	// square is not clean.
+	{"Photos", 0, 0.983, 1, "Get http://photos.lan/: dial tcp: connect: connection refused"},
+	{"Git", 0, 0.951, 1, "status: want 200, got 502"},
+	{"Website", 0, 0.986, 1, "status: want 200, got 502"},
+	{"Website API", 0, 0.976, 1, `body: want "ok", got "maintenance"`},
+
+	{"Photos", 3, 0.982, 1, "Get http://photos.lan/: dial tcp: connect: connection refused"},
+	{"Git", 6, 0.947, 2, "status: want 200, got 502"},
+	{"Git", 17, 0.996, 1, "status: want 200, got 502"},
+	{"Website", 9, 0.891, 1, "Get https://www.example.com/: context deadline exceeded"},
+	{"Website API", 9, 0.905, 1, `body: want "ok", got "maintenance"`},
+	{"Vault", 24, 0.999, 1, "Get https://vault.lan/: EOF"},
+}
+
+// seedMonth writes the days behind the board, today included. In production
+// today's square is drawn from the in-progress accumulator, which the fed
+// probes here deliberately bypass; writing the day gives the demo the same
+// strip a running lookout would have.
+func seedMonth(m *monitor.Monitor, now time.Time) {
+	bad := map[string]badDay{}
+	for _, b := range monthStory {
+		bad[b.check+utcDay(now, b.daysAgo)] = b
+	}
+	for _, c := range monthChecks {
+		for daysAgo := 29; daysAgo >= 0; daysAgo-- {
+			date := utcDay(now, daysAgo)
+			rec := history.Daily{
+				Date:    date,
+				Check:   c.name,
+				Uptime:  1,
+				Samples: c.samples,
+				P50MS:   c.typical,
+				P95MS:   c.slowest,
+			}
+			if b, ok := bad[c.name+date]; ok {
+				rec.Uptime = b.uptime
+				rec.Incidents = b.outages
+				rec.Reason = b.reason
+			}
+			// A demo that cannot seed its own history is a demo that shows
+			// an empty strip, which is the one thing it must not do.
+			if err := m.SeedDay(rec); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func utcDay(now time.Time, daysAgo int) string {
+	return now.UTC().AddDate(0, 0, -daysAgo).Format("2006-01-02")
 }
 
 func up(n int) string   { return repeat("U", n) }

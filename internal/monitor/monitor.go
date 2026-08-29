@@ -543,6 +543,11 @@ func (m *Monitor) UptimeDays(name string, n int, now time.Time) (ratio float64, 
 	return m.histLog.Uptime(name, since, today)
 }
 
+// SeedDay appends a finished day to the history log. It is here for the
+// demo board, which has to show a month of days without running for a
+// month; nothing in the monitor calls it.
+func (m *Monitor) SeedDay(rec history.Daily) error { return m.histLog.Append(rec) }
+
 // Days is one record per UTC day for the last n days ending today, oldest
 // first, with today's in-progress day folded in. Days with no record come
 // back empty rather than missing — see history.Log.Window.

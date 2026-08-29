@@ -96,10 +96,12 @@ It is a real table, with real column headings — the columns are what make
 read the page aloud gets that only if the markup says so. Building the same
 look out of generic boxes was the shortcut, and it cost every reader who cannot
 see the columns. It shows one line per check and opens into the detail — what it watches, when it
-broke, why, uptime over three windows, the latency spread, and a bar of the last
-24 hours. Each row is shown in the units it actually measures: a domain
-registration has no response time and no daily uptime, so it leads with the date
-it runs out.
+broke, why, uptime over three windows, the latency spread, and its history at
+two zooms: a month of days one square each, over a bar of the last 24 hours cut
+into half hours. The month answers whether this is usual, the day answers what
+is happening now, and neither needs a control to switch between them. Each row
+is shown in the units it actually measures: a domain registration has no
+response time and no daily uptime, so it leads with the date it runs out.
 
 There is no way to add a check from the UI, and there will not be. The config is
 in git; a check that exists only in a running process is a check nobody can
@@ -107,7 +109,9 @@ review, diff or restore.
 
 ## Deliberately not here
 
-Graphs beyond the 24-hour bar. Multi-step scenarios. A second notification
+Graphs. The two history strips are counts of good and bad, not plotted lines;
+a latency chart per check is a dashboard, and this is a board. Multi-step
+scenarios. A second notification
 channel. Multi-user anything. Watching the monitor from outside its own network —
 which is a real gap, not an argument that it does not matter: every probe leaves
 from one machine, and if that machine is the thing that is down, nobody is
