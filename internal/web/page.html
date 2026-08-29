@@ -82,6 +82,13 @@
            board twitched under the pointer. The block is sized by the table
            instead of the other way round. -->
       <div class="panel">
+      {{if .Month}}
+      <!-- The month is above the day on purpose: it is the coarser view,
+           and a reader who finds a bad square goes down to the day bar for
+           what happened, not the other way round. -->
+      <div class="month" role="img" aria-label="{{.MonthSummary}}">{{range .Month}}<i class="{{.Class}}"{{if .Title}} title="{{.Title}}"{{end}}></i>{{end}}</div>
+      <div class="axis tight"><span>30 days ago</span><span>today</span></div>
+      {{end}}
       {{if .Timeline}}
       <!-- title= serves the mouse and nothing else: a phone, a keyboard and
            a screen reader all get zero from forty-eight bare rectangles. The

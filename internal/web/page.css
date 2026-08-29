@@ -355,7 +355,7 @@ thead .c-nm { text-align: left; }
 .bar {
   display: flex;
   gap: 1px;
-  height: 1.6rem;
+  height: 1.1rem;
 }
 
 /* A good half-hour is a quiet green tick; a bad one is meant to be the
@@ -377,6 +377,38 @@ thead .c-nm { text-align: left; }
    what lookout knows, and the one thing a green tick must not hide. */
 .bar i.g { background: var(--unknown); opacity: 0.5; }
 
+/* One square per day, thirty of them: the question the day bar cannot
+   answer is "is this thing usually like that", and twenty-four hours of
+   half-hour slots is one working day of evidence. A day is the unit an
+   operator already thinks in — "it fell over on Tuesday" — and thirty of
+   them fit on the same line as the day bar, so the two stack into one
+   history that reads at two zooms without a control to switch between
+   them. A square with nothing behind it is drawn as a hole, never as a
+   good day: this file only started on the 19th. */
+/* The month is the taller of the two bars and the only one cut into
+   separate tiles: two strips of identical rectangles stacked on each
+   other read as one broken bar, and the reader has to consult the labels
+   to learn which is which. A day is a thing you point at; a half hour is
+   a slice of a continuum. */
+.month {
+  display: flex;
+  gap: 3px;
+  height: 1.5rem;
+}
+
+.month i {
+  flex: 1;
+  min-width: 4px;
+  border-radius: 2px;
+  background: var(--up);
+  opacity: 0.5;
+}
+
+.month i.p, .month i.b { opacity: 1; }
+.month i.p { background: var(--flap); }
+.month i.b { background: var(--down); }
+.month i.n { background: var(--rule); opacity: 0.55; }
+
 .axis {
   display: flex;
   justify-content: space-between;
@@ -384,6 +416,10 @@ thead .c-nm { text-align: left; }
   color: var(--mute);
   font-size: 0.75rem;
 }
+
+/* Two bars, one gap: the month sits directly above the day it zooms into,
+   and its own label is what says which is which. */
+.axis.tight { margin-bottom: 0.35rem; }
 
 dl {
   display: grid;

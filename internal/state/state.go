@@ -201,6 +201,10 @@ type DayAcc struct {
 	Up        int     `json:"up"`
 	Incidents int     `json:"incidents"`
 	Durations []int64 `json:"durations,omitempty"` // milliseconds
+	// Reason is the last failure of the day, kept so a bad day can say
+	// what was wrong with it. A day that is only a count of incidents
+	// sends whoever reads it a month later to a log that has rotated.
+	Reason string `json:"reason,omitempty"`
 }
 
 // RegistryCache is the weekly RDAP bootstrap plus any WHOIS servers we
