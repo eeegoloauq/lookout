@@ -4,41 +4,48 @@
    "why", so nothing has to be looked up in a log.
    Dark and light are first-class; there is no "default plus invert". */
 
+/* The base is the warm near-black of the start page these links are opened
+   from, not a blue-black of its own: two tools on one screen that disagree
+   about what "background" is read as two unrelated products, and the eye
+   pays for the switch on every visit. Only the greys are shared — the
+   state colours belong to this tool, because only this tool has states. */
 :root {
-  --paper: #e8eef4;
-  --panel: #dfe6ee;
-  --ink: #1b2430;
-  --mute: #5a6878;
-  --faint: #97a4b2;
-  --rule: #c3ced9;
-  --up: #0f6b45;
+  --paper: #faf8f5;
+  --panel: #f1ede6;
+  --ink: #23201b;
+  --mute: #6b6459;
+  --faint: #948d80;
+  --rule: #ded8cd;
+  --up: #1a7a4e;
   --down: #b42318;
-  --unknown: #667384;
+  --unknown: #6b6459;
   --flap: #8a5800;
-  --up-wash: #d5efe3;
-  --down-wash: #f8d7d4;
-  --flap-wash: #f6e6c5;
-  --unknown-wash: #dde3ea;
+  --up-wash: #dcefe0;
+  --down-wash: #f8dcd6;
+  --flap-wash: #f6e8c8;
+  --unknown-wash: #e6e1d7;
   --banner-bg: #b42318;
   --banner-ink: #fff8f6;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #10151b;
-    --panel: #161d25;
-    --ink: #dce4ed;
-    --mute: #8b98a6;
-    --faint: #5c6977;
-    --rule: #2a343f;
+    --paper: #141312;
+    --panel: #1c1a17;
+    --ink: #e8e4da;
+    --mute: #9a9488;
+    /* Not #6f6a60: that is 3.45:1 here, below the floor for text this
+       small, and these are the numbers that confirm a healthy row. */
+    --faint: #7a746a;
+    --rule: #2c2924;
     --up: #3dcc86;
     --down: #ff6d63;
-    --unknown: #8b98a6;
+    --unknown: #9a9488;
     --flap: #e0a12b;
-    --up-wash: #163126;
-    --down-wash: #3a1a18;
-    --flap-wash: #33260e;
-    --unknown-wash: #1a2129;
+    --up-wash: #1a2b20;
+    --down-wash: #33201c;
+    --flap-wash: #302615;
+    --unknown-wash: #201e1a;
     --banner-bg: #8f1d16;
     --banner-ink: #ffe8e5;
   }
@@ -53,13 +60,22 @@ html {
   color: var(--ink);
 }
 
+/* The interface font, not a terminal font. Monospace was here to make a
+   column of numbers line up, and tabular-nums does that on its own —
+   without making a page of English names look like log output. The stack
+   is the one the start page uses, so the two read as one product.
+
+   64rem was a page wide enough to hold the widest sentence on it, which
+   left every ordinary row with a metre of nothing between its name and
+   its numbers. A scan list is bounded by how far the eye travels from a
+   name to the figure beside it, not by the window. */
 body {
   margin: 0 auto;
-  max-width: 64rem;
+  max-width: 52rem;
   padding: 1.1rem 1.25rem 2rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-variant-numeric: tabular-nums;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 header {
@@ -140,6 +156,10 @@ thead th {
 thead .c-st { text-align: left; }
 thead .c-nm { text-align: left; }
 
+/* The status column is sized by its longest word and nothing else: given
+   room it takes it, and the check names then start half an inch further
+   right on every row for no reason. */
+.c-st { width: 1%; }
 .c-lat, .c-up { width: 5rem; }
 .c-ago { width: 6rem; }
 
