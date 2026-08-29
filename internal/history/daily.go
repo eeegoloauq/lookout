@@ -24,6 +24,10 @@ type Daily struct {
 	Samples   int     `json:"samples"`
 	P50MS     int64   `json:"p50_ms,omitempty"`
 	P95MS     int64   `json:"p95_ms,omitempty"`
+	// Reason is the last failure recorded that day. A month of squares
+	// that can only say "something happened here" is worse than no month
+	// at all: it raises the question and then refuses to answer it.
+	Reason string `json:"reason,omitempty"`
 }
 
 // Log is the append-only JSONL file. Restarts must neither duplicate a
@@ -166,6 +170,42 @@ func (l *Log) Uptime(name, since string, today *state.DayAcc) (ratio float64, sa
 	return float64(up) / float64(samples), samples
 }
 
+// Window returns one record per UTC day for the last n days ending on
+// today, oldest first. A day the file has nothing for comes back as a
+// zero record with its date set: the caller must be able to tell a day
+// that was quiet from a day lookout was not running, and a gap silently
+// closed up would shift every square in the strip onto the wrong date.
+// today is the in-progress accumulator, folded in as the last day.
+func (l *Log) Window(name string, n int, now time.Time, today *state.DayAcc) []Daily {
+	if n < 1 {
+		return nil
+	}
+	l.mu.Lock()
+	have := map[string]Daily{}
+	for _, rec := range l.all {
+		if rec.Check == name {
+			have[rec.Date] = rec
+		}
+	}
+	l.mu.Unlock()
+	if today != nil && today.Date != "" {
+		if _, ok := have[today.Date]; !ok {
+			have[today.Date] = ToDaily(name, "", *today)
+		}
+	}
+	end := now.UTC()
+	out := make([]Daily, 0, n)
+	for i := n - 1; i >= 0; i-- {
+		date := end.AddDate(0, 0, -i).Format("2006-01-02")
+		if rec, ok := have[date]; ok {
+			out = append(out, rec)
+			continue
+		}
+		out = append(out, Daily{Date: date, Check: name})
+	}
+	return out
+}
+
 // RecordDay folds one probe into the in-progress UTC day. dateRolled
 // is the previous accumulator when the clock crossed midnight, so the
 // caller can flush it.
@@ -182,6 +222,8 @@ func RecordDay(acc state.DayAcc, res check.Result, incidents int) (next, rolled 
 		acc.Samples++
 		if res.Outcome.Succeeded() {
 			acc.Up++
+		} else if r := res.Reason(); r != "" {
+			acc.Reason = r
 		}
 		if res.Duration > 0 && len(acc.Durations) < state.MaxDayDurations {
 			acc.Durations = append(acc.Durations, res.Duration.Milliseconds())
@@ -199,6 +241,7 @@ func ToDaily(name, group string, acc state.DayAcc) Daily {
 		Group:     group,
 		Incidents: acc.Incidents,
 		Samples:   acc.Samples,
+		Reason:    acc.Reason,
 	}
 	if acc.Samples > 0 {
 		rec.Uptime = float64(acc.Up) / float64(acc.Samples)

@@ -27,6 +27,12 @@ var pageTmpl = template.Must(template.New("page").Parse(pageHTML))
 // a texture nobody can point at.
 const timelineBuckets = 48
 
+// monthDays is how far the day strip reaches back. Thirty is the window
+// the question is actually asked in — "has this been flaky this month" —
+// and it is as many squares as fit above the day bar while each one stays
+// wide enough to point at. Ninety would be a texture.
+const monthDays = 30
+
 type pageView struct {
 	Title    string
 	Version  string
@@ -87,8 +93,13 @@ type pageRow struct {
 	// who is not hovering it with a mouse.
 	BarSummary string
 	Timeline   []pageBucket
-	Facts      []pageFact
-	Incidents  []pageIncident
+	// Month is one square per day for the last month, and MonthSummary is
+	// the same history said in a sentence for everyone who is not hovering
+	// it with a mouse.
+	MonthSummary string
+	Month        []pageBucket
+	Facts        []pageFact
+	Incidents    []pageIncident
 }
 
 // pageIncident is one closed outage in the row's history.
@@ -200,6 +211,14 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 		if ring, ok := s.mon.History().Ring(c.Name); ok && !sparse(c) {
 			row.Timeline = timeline(ring.Points(), now.In(loc), time.Duration(c.IntervalMS)*time.Millisecond)
 			row.BarSummary = barSummary(row.Timeline)
+		}
+		// A registration is not up or down on a given day, so the strip
+		// says nothing about one; everything else has a day per square,
+		// including the checks that run too rarely for the day bar.
+		if c.Type != "domain" {
+			days := s.mon.Days(c.Name, monthDays, now)
+			row.Month = month(days)
+			row.MonthSummary = monthSummary(days)
 		}
 		if c.Type == "domain" {
 			row.Wide, row.WideDays, row.WideWhen = registrationSummary(c, loc)
@@ -510,6 +529,80 @@ func expiryLine(c CheckStatus, loc *time.Location, withDomain bool) string {
 		parts = append(parts, "registry has not answered")
 	}
 	return join(parts, " · ")
+}
+
+// month turns the daily records into one square each. A day with any
+// failure in it keeps its colour for the whole month: the point of the
+// strip is that a Tuesday that went wrong is still visible on the Friday
+// three weeks later, when the ring that held the detail is long gone.
+func month(days []history.Daily) []pageBucket {
+	out := make([]pageBucket, 0, len(days))
+	for _, d := range days {
+		date := d.Date
+		if t, err := time.Parse("2006-01-02", d.Date); err == nil {
+			date = t.Format("2 Jan")
+		}
+		if d.Samples == 0 && d.Incidents == 0 {
+			// Before lookout was watching, or while it was not running.
+			// Drawing this green would be the board inventing evidence.
+			out = append(out, pageBucket{Class: "n", Title: date + "\nno data"})
+			continue
+		}
+		b := pageBucket{Class: "o"}
+		switch {
+		case d.Uptime < 0.99:
+			b.Class = "b"
+		case d.Uptime < 1 || d.Incidents > 0:
+			b.Class = "p"
+		}
+		lines := []string{date}
+		day := formatRatio(d.Uptime) + " of " + plural(d.Samples, "probe")
+		if d.Incidents > 0 {
+			day += " · " + plural(d.Incidents, "outage")
+		}
+		lines = append(lines, day)
+		if d.P50MS > 0 {
+			line := "typical " + formatLatency(time.Duration(d.P50MS)*time.Millisecond)
+			if d.P95MS > d.P50MS {
+				line += " · slowest 5% " + formatLatency(time.Duration(d.P95MS)*time.Millisecond)
+			}
+			lines = append(lines, line)
+		}
+		// The reason is the whole difference between a strip that reports
+		// and a strip that only worries.
+		if d.Reason != "" {
+			lines = append(lines, d.Reason)
+		}
+		b.Title = join(lines, "\n")
+		out = append(out, b)
+	}
+	return out
+}
+
+// monthSummary says what the strip shows in one sentence.
+func monthSummary(days []history.Daily) string {
+	clean, bad, blank := 0, 0, 0
+	for _, d := range days {
+		switch {
+		case d.Samples == 0 && d.Incidents == 0:
+			blank++
+		case d.Uptime >= 1 && d.Incidents == 0:
+			clean++
+		default:
+			bad++
+		}
+	}
+	if clean+bad == 0 {
+		return "30 days: no history yet"
+	}
+	parts := []string{plural(clean, "clean day")}
+	if bad > 0 {
+		parts = append(parts, plural(bad, "day")+" with failures")
+	}
+	if blank > 0 {
+		parts = append(parts, plural(blank, "day")+" with no data")
+	}
+	return "30 days: " + join(parts, ", ")
 }
 
 // timeline folds the ring into fixed half-hour slots. A slot with any

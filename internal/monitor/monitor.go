@@ -543,6 +543,20 @@ func (m *Monitor) UptimeDays(name string, n int, now time.Time) (ratio float64, 
 	return m.histLog.Uptime(name, since, today)
 }
 
+// Days is one record per UTC day for the last n days ending today, oldest
+// first, with today's in-progress day folded in. Days with no record come
+// back empty rather than missing — see history.Log.Window.
+func (m *Monitor) Days(name string, n int, now time.Time) []history.Daily {
+	m.daysMu.Lock()
+	acc, ok := m.days[name]
+	m.daysMu.Unlock()
+	var today *state.DayAcc
+	if ok {
+		today = &acc
+	}
+	return m.histLog.Window(name, n, now, today)
+}
+
 func (m *Monitor) recordDay(c config.Check, res check.Result, incidents int) {
 	m.daysMu.Lock()
 	acc, rolled, ok := history.RecordDay(m.days[c.Name], res, incidents)
