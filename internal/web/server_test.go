@@ -1415,3 +1415,35 @@ func TestRowHasOneNamedControl(t *testing.T) {
 		t.Error("a collapsed panel is still in the accessibility tree")
 	}
 }
+
+// Without `groups:` a group sits where its first check happens to be written,
+// so inserting a check moved whole sections of the board. The list is what
+// makes the order something the operator chose.
+func TestPageGroupsFollowTheConfiguredOrder(t *testing.T) {
+	src := "groups: [Core, Services]\n" + twoChecks
+	m := testMonitor(t, src)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	feed(t, m, "Router", "UU", time.Now(), 20*time.Millisecond, 200)
+	body := get(t, New(m, "test", ""), "/").Body.String()
+	core := strings.Index(body, `scope="colgroup">Core`)
+	services := strings.Index(body, `scope="colgroup">Services`)
+	if core < 0 || services < 0 {
+		t.Fatalf("group headings missing:\n%s", body)
+	}
+	// Photos (Services) is written first; the list says Core comes first.
+	if core > services {
+		t.Error("groups: was ignored, the board still follows the order of the checks")
+	}
+}
+
+// A group the list does not mention keeps its place behind the ones it does.
+func TestPageKeepsUnlistedGroupsLast(t *testing.T) {
+	src := "groups: [Services]\n" + twoChecks
+	m := testMonitor(t, src)
+	feed(t, m, "Photos", "UU", time.Now(), 12*time.Millisecond, 200)
+	feed(t, m, "Router", "UU", time.Now(), 20*time.Millisecond, 200)
+	body := get(t, New(m, "test", ""), "/").Body.String()
+	if strings.Index(body, `scope="colgroup">Services`) > strings.Index(body, `scope="colgroup">Core`) {
+		t.Error("a listed group must come before an unlisted one")
+	}
+}

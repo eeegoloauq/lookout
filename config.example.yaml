@@ -79,6 +79,12 @@ alerting:
     # Telegram is often unreachable directly; send through SOCKS5.
     proxy: socks5://proxy.example:1080
 
+# The order the board shows groups in. Omit it and a group sits wherever its
+# first check happens to be written, so adding one check reshuffles the page.
+# Groups not listed here follow the listed ones, in the order they appear
+# below. Every name must belong to some check: a typo is refused, not ignored.
+groups: [Core, Services, Public]
+
 checks:
   - name: Photos
     group: Services

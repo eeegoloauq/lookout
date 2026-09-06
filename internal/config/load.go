@@ -27,6 +27,7 @@ type fileConfig struct {
 	Listen            *string       `yaml:"listen"`
 	Timezone          *string       `yaml:"timezone"`
 	RegistrationGroup *string       `yaml:"registration_group"`
+	Groups            []string      `yaml:"groups"`
 	State             *fileState    `yaml:"state"`
 	Defaults          *fileDefaults `yaml:"defaults"`
 	Alerting          *fileAlerting `yaml:"alerting"`
@@ -265,8 +266,45 @@ func resolve(c *collector, raw *fileConfig) *Config {
 	// Derived checks are appended last so an explicit one always wins.
 	cfg.Checks = append(cfg.Checks, derivedRegistrations(cfg.Checks, def, cfg.RegistrationGroup)...)
 
+	cfg.Groups = resolveGroups(c, raw.Groups, cfg.Checks)
+
 	cfg.Mute = resolveMute(c, raw.Mute, seen)
 	return cfg
+}
+
+// resolveGroups validates the board's group order. A name nobody uses is an
+// error rather than a note: a typo there is invisible on the page, and the
+// whole point of the list is that the order stops depending on the file.
+func resolveGroups(c *collector, in []string, checks []Check) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	used := map[string]bool{}
+	for _, chk := range checks {
+		if chk.Group != "" {
+			used[chk.Group] = true
+		}
+	}
+	out := make([]string, 0, len(in))
+	seen := map[string]int{}
+	for i, raw := range in {
+		path := fmt.Sprintf("groups[%d]", i)
+		name := strings.TrimSpace(raw)
+		switch {
+		case name == "":
+			c.addf(path, "group name is empty")
+		case !used[name]:
+			c.addf(path, "no check has group %q", name)
+		default:
+			if first, dup := seen[name]; dup {
+				c.addf(path, "duplicate group %q, already listed at groups[%d]", name, first)
+			} else {
+				seen[name] = i
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 func defaultHistoryFile(stateFile string) string {

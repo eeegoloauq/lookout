@@ -109,12 +109,17 @@ type Config struct {
 	// date it runs out. Empty keeps them off the board, where the sites
 	// that implied them carry the same fact.
 	RegistrationGroup string
-	StateFile         string
-	HistoryFile       string
-	SamplesFile       string
-	Alerting          Alerting
-	Mute              []MuteWindow
-	Checks            []Check
+	// Groups is the order the board shows groups in. Without it a group sits
+	// where its first check happens to be written, so inserting one check
+	// moves whole sections of the page around — the layout becomes a side
+	// effect of edit history rather than something anyone chose.
+	Groups      []string
+	StateFile   string
+	HistoryFile string
+	SamplesFile string
+	Alerting    Alerting
+	Mute        []MuteWindow
+	Checks      []Check
 }
 
 // MuteWindow is a recurring quiet period. Probes keep running;

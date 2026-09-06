@@ -122,6 +122,31 @@ type pageBucket struct {
 	Title string
 }
 
+// orderGroups puts the groups the config named first, in the order it named
+// them, and leaves the rest behind them in the order they appear in the file.
+// Without a `groups:` list nothing moves: the board keeps the order the checks
+// were written in.
+func orderGroups(order, want []string) []string {
+	if len(want) == 0 {
+		return order
+	}
+	rank := make(map[string]int, len(want))
+	for i, name := range want {
+		rank[name] = i
+	}
+	out := make([]string, len(order))
+	copy(out, order)
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, oki := rank[out[i]]
+		rj, okj := rank[out[j]]
+		if oki != okj {
+			return oki
+		}
+		return oki && ri < rj
+	})
+	return out
+}
+
 func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	now := time.Now()
 	loc := s.location()
@@ -257,7 +282,7 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 	if down > 0 {
 		view.Title = fmt.Sprintf("lookout — %s down", plural(down, "check"))
 	}
-	for _, name := range order {
+	for _, name := range orderGroups(order, s.mon.Config().Groups) {
 		g := groups[name]
 		g.Note = groupNote(g.Rows)
 		view.Groups = append(view.Groups, *g)
