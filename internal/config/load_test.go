@@ -756,3 +756,42 @@ checks:
 		t.Fatalf("derived = %+v, want example.com", derived)
 	}
 }
+
+const grouped = `
+groups: [Core, Services]
+checks:
+  - name: Photos
+    group: Services
+    type: http
+    url: http://photos.invalid/ping
+  - name: Router
+    group: Core
+    type: http
+    url: http://router.invalid/
+`
+
+func TestGroupsAreKeptInTheOrderWritten(t *testing.T) {
+	cfg := mustLoad(t, grouped)
+	if got := strings.Join(cfg.Groups, ","); got != "Core,Services" {
+		t.Fatalf("groups = %q, want %q", got, "Core,Services")
+	}
+}
+
+// A group nobody uses is a typo, and a typo here is invisible: the board just
+// keeps the old order.
+func TestUnusedGroupIsRejected(t *testing.T) {
+	_, err := Load("config.yaml", []byte(strings.Replace(grouped, "Services]", "Servcies]", 1)))
+	if err == nil {
+		t.Fatal("a group name no check uses must not load")
+	}
+	if !strings.Contains(err.Error(), "Servcies") {
+		t.Fatalf("error does not name the unused group: %v", err)
+	}
+}
+
+func TestDuplicateGroupIsRejected(t *testing.T) {
+	_, err := Load("config.yaml", []byte(strings.Replace(grouped, "[Core, Services]", "[Core, Services, Core]", 1)))
+	if err == nil {
+		t.Fatal("a group listed twice must not load")
+	}
+}
