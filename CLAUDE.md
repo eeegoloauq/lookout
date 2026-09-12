@@ -18,6 +18,7 @@ internal/web      status page, /api/status, /metrics, /healthz
 internal/registry RDAP and WHOIS parsing
 internal/demo     synthetic board for `lookout demo` and for the screenshots
 internal/mute     scheduled and ad-hoc silence windows
+internal/push     dead-man checks: the ping table and the deadline judging it
 ```
 
 Data flows one way. `monitor` calls a `probe`, gets a `check.Result`, hands it to

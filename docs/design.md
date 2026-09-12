@@ -73,6 +73,28 @@ A `tcp` check sends nothing. It dials, notes what answered and closes. Writing a
 protocol greeting would make the target log a broken client every minute for as
 long as the check exists.
 
+## The check that cannot be probed
+
+A backup that stopped running is invisible to every probe here. There is no
+port to dial and no page to fetch, the job may have died before it started,
+and the machine it ran on may be the thing that is gone. A `push` check
+inverts the direction: the job reports in, and lookout watches the clock.
+
+Nothing else about it is special, on purpose. The deadline is read on the
+scheduler's tick like any other check, the result goes through the same state
+machine, and the same thresholds decide when being late is an outage — so a
+dead-man check flaps, recovers and alerts exactly like the four types that do
+leave the machine. The endpoint records the ping and nothing more: if an
+incoming request could drive the state machine, a flood of them could drive it
+anywhere, and the event this check exists for is the one that never arrives.
+
+The token in the ping URL is the only credential lookout has. It comes from
+the environment, it is compared in constant time against every push check
+rather than looked up, and it is never logged, echoed in an error or put in
+the status document. A token nobody owns gets the same 404 a wrong path does,
+because "unknown token" and "no such check" are the same answer to someone
+guessing.
+
 ## Expiry comes free or not at all
 
 TLS expiry is read from the handshake an `https` check already performs. There is
