@@ -1,6 +1,6 @@
 # lookout
 
-A lightweight uptime monitor in Go: HTTP, TCP and DNS checks, a status page, Telegram alerts.
+A lightweight uptime monitor in Go: HTTP, TCP, DNS and dead-man checks, a status page, Telegram alerts.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/board-light.png">
@@ -54,6 +54,38 @@ database, a broker, an SSH daemon, a container that exposes nothing but a port.
 is retried rather than counted, and a changed answer set is reported as drift
 against the first answer seen. SERVFAIL fails the check instead of counting as
 drift.
+
+**push** — the dead-man switch, for work that has no port to dial: a backup, a
+sync, a certificate renewal. Nothing is probed. The job reports in when it
+finishes and the check goes down when a report does not arrive in time, which
+is the one failure a probe can never see — a job that stopped running is not
+there to say so, and the machine it ran on may be the thing that is gone.
+
+```yaml
+  - name: ZFS tank
+    group: Jobs
+    type: push
+    expect_every: 10m                   # the deadline between pings
+    grace: 2m                           # optional slack, default 0
+    token: ${LOOKOUT_PUSH_TOKEN_ZFS}    # the secret in the ping URL
+```
+
+```sh
+# in the crontab, after the job itself
+0 3 * * * /usr/local/bin/backup.sh && curl -fsS "$LOOKOUT_PUSH_URL"
+# or, when the job knows it went wrong
+0 3 * * * /usr/local/bin/backup.sh || curl -fsS "$LOOKOUT_PUSH_URL?status=fail&msg=backup+failed"
+```
+
+lookout re-reads the deadline once a minute and confirms a missed ping with
+the same `failure_threshold` every other check uses, so a silent job is DOWN a
+few minutes after its deadline rather than on the second.
+
+The URL is `http://<listen>/api/push/<token>`, POST or GET, answering 204. A
+token nothing knows gets a 404 that says nothing about which half was wrong.
+`msg` is kept to 200 characters and shown on the page beside the ping.
+Unlike mute, this endpoint is not loopback-only — the machine doing the work is
+somewhere else — so `listen:` has to be an address that machine can reach.
 
 **TLS and domain expiry** — certificate dates are read out of the handshake an
 `https` check already performs, and registration dates are looked up once a day

@@ -17,8 +17,8 @@ mute:
     timezone: UTC
     group: Public
 
-# HTTP, DNS and domain checks. Certificate expiry is read from the HTTPS
-# handshake of an http check — there is no separate type for it.
+# HTTP, TCP, DNS, domain and push checks. Certificate expiry is read from the
+# HTTPS handshake of an http check — there is no separate type for it.
 
 # Status page, JSON API and /metrics. Default is loopback only — the
 # page is for the machine that runs lookout, not the rest of the LAN.
@@ -148,6 +148,26 @@ checks:
       answers_contain: mail.service.example
     # interval defaults to 5m. A changed answer set (NS/MX/A snapshot)
     # is drift: the first probe is a baseline, later changes alert.
+
+  # A dead-man switch, for work that has no port to dial: lookout probes
+  # nothing and waits to be told. The job pings when it finishes, and the
+  # check goes down when no ping arrives within expect_every + grace.
+  # interval, timeout, url and expect are refused here: there is nothing to
+  # dial, nothing to schedule on this side and no response to assert about.
+  #
+  #   0 3 * * * /usr/local/bin/backup.sh &&
+  #     curl -fsS "http://127.0.0.1:5665/api/push/$LOOKOUT_PUSH_TOKEN_ZFS"
+  #
+  # Add ?status=fail&msg=... to report a run that failed, and note that the
+  # endpoint is reachable by whoever can reach listen: — the token is what
+  # stands in for knowing who is calling, so it belongs in the environment
+  # and wants to be long and random.
+  - name: ZFS tank
+    group: Jobs
+    type: push
+    expect_every: 10m
+    grace: 2m             # optional slack on the deadline; default 0
+    token: ${LOOKOUT_PUSH_TOKEN_ZFS}
 
   - name: service.example
     group: Public
