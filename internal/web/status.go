@@ -82,6 +82,11 @@ type CheckStatus struct {
 	// DELEGATED flag (gTLDs). False is "we saw it and it is gone".
 	DomainDelegated *bool `json:"domain_delegated,omitempty"`
 
+	// Push is the dead-man state of a push check: when it last reported
+	// and what it said. Null on every other type. The token is never in
+	// here — this document is served to whoever can reach the port.
+	Push *PushView `json:"push,omitempty"`
+
 	// Muted is true while a quiet window covers this check. Probes
 	// still run; only delivery is suppressed.
 	Muted bool `json:"muted"`
@@ -106,6 +111,17 @@ type CheckStatus struct {
 	// Null when there are no samples, never 100% by omission.
 	Uptime7d  *UptimeView `json:"uptime_7d"`
 	Uptime30d *UptimeView `json:"uptime_30d"`
+}
+
+// PushView is a push check's heartbeat as a consumer should see it.
+// ExpectEveryMS and GraceMS are the deadline: without them LastPingAt is a
+// timestamp nobody can judge.
+type PushView struct {
+	LastPingAt    *time.Time `json:"last_ping_at"`
+	Status        string     `json:"status,omitempty"`
+	Msg           string     `json:"msg,omitempty"`
+	ExpectEveryMS int64      `json:"expect_every_ms"`
+	GraceMS       int64      `json:"grace_ms,omitempty"`
 }
 
 // ProbeView is the most recent probe of a check.
@@ -362,6 +378,19 @@ func (s *server) checkStatus(c config.Check, now time.Time) CheckStatus {
 		if lat := latency(ring.Points()); lat != nil {
 			out.Latency24h = lat
 		}
+	}
+	if c.Type == config.TypePush {
+		view := PushView{
+			ExpectEveryMS: c.ExpectEvery.Milliseconds(),
+			GraceMS:       c.Grace.Milliseconds(),
+		}
+		if ping, ok := s.mon.LastPing(c.Name); ok && !ping.At.IsZero() {
+			at := ping.At.UTC()
+			view.LastPingAt = &at
+			view.Status = ping.Status
+			view.Msg = ping.Msg
+		}
+		out.Push = &view
 	}
 	out.RemoteAddr = cs.RemoteAddr
 	for _, inc := range cs.Incidents {

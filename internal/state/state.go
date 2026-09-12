@@ -160,6 +160,14 @@ type Snapshot struct {
 	// JSONL history file at midnight.
 	Days map[string]DayAcc `json:"days,omitempty"`
 
+	// Pings is the last heartbeat of every push check, by check name. It
+	// sits beside the check states rather than inside one because the two
+	// have different authors: the state machine owns what lookout
+	// concluded, this owns what arrived from outside. Durable because a
+	// restart that forgot the last ping would invent an outage out of its
+	// own downtime.
+	Pings map[string]Ping `json:"pings,omitempty"`
+
 	// LastHeartbeat is when the still-alive message was last queued.
 	// Durable so a restart cannot turn a weekly ping into one per boot,
 	// and a week of downtime cannot queue seven of them.
@@ -206,6 +214,31 @@ type DayAcc struct {
 	// sends whoever reads it a month later to a log that has rotated.
 	Reason string `json:"reason,omitempty"`
 }
+
+// Ping is the last heartbeat one push check received.
+type Ping struct {
+	// At is when the last ping arrived, zero while none ever has.
+	At time.Time `json:"at,omitzero"`
+	// Since is when lookout started waiting for the first ping. Until one
+	// arrives there is nothing to measure a deadline from, and a check
+	// whose token was never wired up still has to be able to go down:
+	// that is precisely the failure a dead-man switch is for.
+	Since  time.Time `json:"since,omitzero"`
+	Status string    `json:"status,omitempty"`
+	// Msg is the short line the sender attached, already trimmed and
+	// truncated. It is shown on the page and quoted in the alert.
+	Msg string `json:"msg,omitempty"`
+}
+
+// The two statuses a ping may carry. Anything else is rejected at the
+// endpoint: a word nobody recognises must not be read as "fine".
+const (
+	PingOK   = "ok"
+	PingFail = "fail"
+)
+
+// Failed reports whether the sender said it went wrong.
+func (p Ping) Failed() bool { return p.Status == PingFail }
 
 // RegistryCache is the weekly RDAP bootstrap plus any WHOIS servers we
 // have already asked IANA for. A hard-coded TLD table would go stale

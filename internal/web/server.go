@@ -38,6 +38,13 @@ func New(m *monitor.Monitor, version, source string) http.Handler {
 	// whoever can reach the port; muting is not.
 	mux.HandleFunc("POST /api/mute", localOnly(s.mute))
 	mux.HandleFunc("POST /api/unmute", localOnly(s.unmute))
+	// A dead-man check is pinged rather than probed, and the ping comes
+	// from whatever machine does the work. POST is the verb; GET is
+	// accepted as well so a cron line is `curl -fsS <url>` and nothing
+	// more, which is the difference between a check that gets installed
+	// and one that gets meant to be.
+	mux.HandleFunc("POST /api/push/{token}", s.push)
+	mux.HandleFunc("GET /api/push/{token}", s.push)
 	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	return mux

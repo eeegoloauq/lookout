@@ -60,6 +60,22 @@ const (
 	// that would look like a scraper.
 	DomainMinInterval = time.Hour
 
+	// PushTick is how often a push check re-reads its deadline. It is not
+	// configurable: it is the resolution of "how late is late", and a
+	// finer tick would only spend wakeups to notice a missed cron a few
+	// seconds sooner. It is also what the in-memory history is sized for —
+	// the ring is capped, and a check ticking twice a minute would hold
+	// half a day in a column that says 24h.
+	PushTick = time.Minute
+	// PushMinExpect is the shortest deadline a push check may declare.
+	// Below this a heartbeat is a liveness probe, and a liveness probe is
+	// what the other four types are for.
+	PushMinExpect = 10 * time.Second
+	// PushMinToken is the shortest push token accepted. The token is the
+	// only credential lookout has: it is a password that travels in a URL,
+	// in a cron line, in somebody's shell history.
+	PushMinToken = 16
+
 	// Telegram credentials live in the environment, never in the config file
 	//. Empty values are treated as missing.
 	EnvTelegramToken  = "LOOKOUT_TELEGRAM_TOKEN"
@@ -79,6 +95,11 @@ const (
 	TypeTCP    Type = "tcp"
 	TypeDNS    Type = "dns"
 	TypeDomain Type = "domain"
+	// TypePush is the dead-man switch: lookout probes nothing and waits
+	// for the check to report in. A job that stopped running cannot say
+	// so, and the machine it ran on may be the thing that is gone, so the
+	// missing report is the event.
+	TypePush Type = "push"
 )
 
 // QueryType is a DNS resource record type a dns check will ask for.
@@ -206,6 +227,17 @@ type Check struct {
 
 	Interval time.Duration
 	Timeout  time.Duration
+
+	// ExpectEvery is a push check's deadline: a heartbeat that has not
+	// arrived within it, plus Grace, is an outage. Grace is slack for a
+	// job that runs to the minute but does not finish to the second.
+	// Both are zero on every other type.
+	ExpectEvery time.Duration
+	Grace       time.Duration
+	// PushToken is the secret in the URL a heartbeat is sent to. It comes
+	// from the environment like every other secret, and it is never
+	// rendered on the page, in the API, or in a log line.
+	PushToken string
 
 	Expect Expect
 
