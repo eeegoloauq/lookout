@@ -223,6 +223,21 @@ func (s *server) page(w http.ResponseWriter, _ *http.Request) {
 			row.Checked = formatAgo(now, c.LastProbe.At)
 			row.CheckedQuiet = healthy && onSchedule(now, c.LastProbe.At, time.Duration(c.IntervalMS)*time.Millisecond)
 		}
+		if p := c.Push; p != nil {
+			// A dead-man check measures a deadline, not a response, so
+			// there is no time to print; "<1ms" would read as an answer
+			// that never came. The column asks when this check was last
+			// heard from, and for a push check that is the ping — the tick
+			// that noticed it is lookout talking to itself.
+			row.Latency = "—"
+			row.Checked = "—"
+			row.CheckedQuiet = false
+			if p.LastPingAt != nil {
+				deadline := time.Duration(p.ExpectEveryMS+p.GraceMS) * time.Millisecond
+				row.Checked = formatAgo(now, *p.LastPingAt)
+				row.CheckedQuiet = healthy && onSchedule(now, *p.LastPingAt, deadline)
+			}
+		}
 		if c.Uptime24h != nil {
 			row.Uptime = formatRatio(c.Uptime24h.Ratio)
 			row.UptimeQuiet = healthy && c.Uptime24h.Ratio >= 1
@@ -444,6 +459,10 @@ func facts(c CheckStatus, now time.Time, loc *time.Location, linked bool) []page
 	// "the site is up" and "the site is up on the machine I thought I
 	// turned off".
 	add("connected", c.RemoteAddr)
+	if p := c.Push; p != nil {
+		add("expects", pushDeadline(p))
+		add("last ping", pushLast(p, now))
+	}
 	if c.Type == "domain" {
 		// The uptime of a registry lookup is not the uptime of anything
 		// anyone cares about, and neither is how fast RDAP answered.
@@ -500,6 +519,34 @@ func target(c CheckStatus) string {
 		return c.Host
 	}
 	return ""
+}
+
+// pushDeadline says what the check is waiting for, in the words the config
+// used: nothing else on the panel explains what "no ping for 14m" is late
+// against.
+func pushDeadline(p *PushView) string {
+	line := "a ping every " + formatSpan(time.Duration(p.ExpectEveryMS)*time.Millisecond)
+	if p.GraceMS > 0 {
+		line += " · " + formatSpan(time.Duration(p.GraceMS)*time.Millisecond) + " grace"
+	}
+	return line
+}
+
+// pushLast is the heartbeat itself. A check waiting for its first ping says
+// so rather than showing an empty line: "nothing has pinged yet" and "the
+// panel has no room for this" are different facts.
+func pushLast(p *PushView, now time.Time) string {
+	if p.LastPingAt == nil {
+		return "none yet"
+	}
+	line := formatAgo(now, *p.LastPingAt)
+	if p.Status == state.PingFail {
+		line += " · reported a failure"
+	}
+	if p.Msg != "" {
+		line += " · " + p.Msg
+	}
+	return line
 }
 
 func uptimeLine(c CheckStatus) string {

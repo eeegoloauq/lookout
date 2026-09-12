@@ -395,6 +395,7 @@ func TestAlertingModeRejectsNonsenseAndHalfConfiguration(t *testing.T) {
 
 func TestExampleConfigLoads(t *testing.T) {
 	t.Setenv("LOOKOUT_BASIC_AUTH", "dXNlcjpwYXNz")
+	t.Setenv("LOOKOUT_PUSH_TOKEN_ZFS", "0123456789abcdef")
 	if _, err := LoadFile("../../config.example.yaml"); err != nil {
 		t.Fatalf("config.example.yaml must be valid: %v", err)
 	}

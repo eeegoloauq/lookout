@@ -4,6 +4,7 @@ package monitor
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"github.com/eeegoloauq/lookout/internal/config"
 	"github.com/eeegoloauq/lookout/internal/history"
 	"github.com/eeegoloauq/lookout/internal/mute"
+	"github.com/eeegoloauq/lookout/internal/push"
 	"github.com/eeegoloauq/lookout/internal/state"
 )
 
@@ -55,6 +57,7 @@ type Monitor struct {
 	loadedOutbox state.Outbox
 
 	book      *mute.Book
+	pings     *push.Store
 	histLog   *history.Log
 	samples   *history.Samples
 	days      map[string]state.DayAcc
@@ -116,6 +119,7 @@ func New(cfg *config.Config, prober Prober, opts ...Option) *Monitor {
 		histLog:   history.NewLog(cfg.HistoryFile),
 		samples:   history.NewSamples(cfg.SamplesFile),
 		book:      mute.NewBook(cfg.Mute),
+		pings:     push.NewStore(),
 		days:      map[string]state.DayAcc{},
 		wakeHolds: make(chan struct{}, 1),
 		log:       slog.Default(),
@@ -229,6 +233,7 @@ func (m *Monitor) restore() {
 	m.machine.Restore(snap)
 	m.loadedOutbox = snap.Outbox
 	m.book.Restore(snap.Holds)
+	m.pings.Restore(snap.Pings)
 	m.daysMu.Lock()
 	m.days = snap.Days
 	if m.days == nil {
@@ -260,6 +265,7 @@ func (m *Monitor) restore() {
 		names = append(names, c.Name)
 	}
 	m.machine.Prune(names)
+	m.pings.Prune(names)
 	// A mute that expired while we were down, or a UTC day that crossed
 	// midnight, must be resolved before the first request or probe.
 	for _, ev := range m.book.Expire(time.Now()) {
@@ -311,13 +317,22 @@ func phase(name string, interval time.Duration) time.Duration {
 }
 
 func (m *Monitor) probe(ctx context.Context, c config.Check) {
-	select {
-	case m.sem <- struct{}{}:
-	case <-ctx.Done():
-		return
+	var res check.Result
+	if c.Type == config.TypePush {
+		// A push check dials nothing, so it does not take a probe slot:
+		// waiting behind eight stalled sockets would report a deadline
+		// that passed while lookout was busy rather than one the sender
+		// missed.
+		res = m.pings.Evaluate(c, time.Now())
+	} else {
+		select {
+		case m.sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		res = m.prober.Probe(ctx, c)
+		<-m.sem
 	}
-	res := m.prober.Probe(ctx, c)
-	<-m.sem
 
 	if ctx.Err() != nil {
 		// A probe aborted by shutdown says nothing about the target.
@@ -347,7 +362,7 @@ func (m *Monitor) probe(ctx context.Context, c config.Check) {
 		m.emit(ev)
 	}
 	m.recordDay(c, res, incidents)
-	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) || registryDirty(m.prober) || m.book.Dirty() || m.daysAreDirty() || m.heartbeatDirty() {
+	if m.machine.Dirty() || (m.pipeline != nil && m.pipeline.Dirty()) || registryDirty(m.prober) || m.book.Dirty() || m.pings.Dirty() || m.daysAreDirty() || m.heartbeatDirty() {
 		m.save()
 	}
 }
@@ -441,9 +456,10 @@ func (m *Monitor) save() {
 	outboxDirty := m.pipeline != nil && m.pipeline.Dirty()
 	regDirty := registryDirty(m.prober)
 	holdsDirty := m.book.Dirty()
+	pingsDirty := m.pings.Dirty()
 	daysDirty := m.daysAreDirty()
 	beatDirty := m.heartbeatDirty()
-	if !machineDirty && !outboxDirty && !regDirty && !holdsDirty && !daysDirty && !beatDirty {
+	if !machineDirty && !outboxDirty && !regDirty && !holdsDirty && !pingsDirty && !daysDirty && !beatDirty {
 		return
 	}
 	m.machine.ClearDirty()
@@ -451,6 +467,7 @@ func (m *Monitor) save() {
 		m.pipeline.ClearDirty()
 	}
 	m.book.ClearDirty()
+	m.pings.ClearDirty()
 	m.clearDaysDirty()
 	m.clearHeartbeatDirty()
 	if rv, ok := m.prober.(registryView); ok {
@@ -461,6 +478,7 @@ func (m *Monitor) save() {
 		snap.Registry = rv.Registry()
 	}
 	snap.Holds = m.book.Snapshot()
+	snap.Pings = m.pings.Snapshot()
 	m.daysMu.Lock()
 	snap.Days = cloneDays(m.days)
 	m.daysMu.Unlock()
@@ -514,6 +532,54 @@ func (m *Monitor) Unmute(group, check string) int {
 	m.nudgeHolds()
 	m.log.Info("unmuted", "group", group, "check", check, "digests", len(events))
 	return len(events)
+}
+
+// Ping records one heartbeat for the check that owns the token, and reports
+// whether any check does. The caller answers the same way either way: a
+// reply that distinguishes "no such token" from "wrong status" tells whoever
+// is guessing tokens which half they got right.
+//
+// The ping is not evaluated here. The scheduler's tick decides what it
+// means, like it does for every other check, so a flood of pings cannot
+// drive the state machine and a ping that stops arriving still counts.
+func (m *Monitor) Ping(token, status, msg string, now time.Time) bool {
+	c, ok := pushCheckFor(m.cfg, token)
+	if !ok {
+		return false
+	}
+	fresh := m.pings.Record(c.Name, status, msg, now)
+	// The token is never logged, with or without the message: a log line
+	// is copied into an issue far more often than a state file is.
+	m.log.Debug("push ping", "check", c.Name, "status", status)
+	if fresh {
+		// A burst of pings from one sender says nothing a single one does
+		// not, and every save is an fsync the whole process waits behind.
+		// The tick that follows writes whatever this skipped.
+		m.save()
+	}
+	return true
+}
+
+// LastPing is the heartbeat a push check most recently received, for the
+// status page.
+func (m *Monitor) LastPing(name string) (state.Ping, bool) { return m.pings.Last(name) }
+
+// pushCheckFor finds the check a token belongs to. It compares against every
+// push check with subtle.ConstantTimeCompare and does not stop at the match:
+// the token is the only credential in this program, and both an early return
+// and a map lookup leak how much of a guess was right.
+func pushCheckFor(cfg *config.Config, token string) (config.Check, bool) {
+	var found config.Check
+	ok := false
+	for _, c := range cfg.Checks {
+		if c.Type != config.TypePush || c.PushToken == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(c.PushToken), []byte(token)) == 1 {
+			found, ok = c, true
+		}
+	}
+	return found, ok
 }
 
 // Mutes is the currently active quiet windows, for the status page.

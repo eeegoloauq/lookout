@@ -102,6 +102,9 @@ type fileCheck struct {
 	Headers          map[string]string `yaml:"headers"`
 	Interval         *string           `yaml:"interval"`
 	Timeout          *string           `yaml:"timeout"`
+	ExpectEvery      *string           `yaml:"expect_every"`
+	Grace            *string           `yaml:"grace"`
+	Token            *string           `yaml:"token"`
 	Expect           *fileExpect       `yaml:"expect"`
 	Alert            *bool             `yaml:"alert"`
 	FailureThreshold *int              `yaml:"failure_threshold"`
@@ -250,6 +253,10 @@ func resolve(c *collector, raw *fileConfig) *Config {
 	}
 
 	seen := make(map[string]int, len(raw.Checks))
+	// tokens maps a push token to the check that claimed it. Two checks
+	// sharing one cannot be told apart at the endpoint, so the second
+	// would silently answer for the first.
+	tokens := map[string]string{}
 	for i, rc := range raw.Checks {
 		path := fmt.Sprintf("checks[%d]", i)
 		chk := resolveCheck(c, path, rc, def, origin)
@@ -258,6 +265,15 @@ func resolve(c *collector, raw *fileConfig) *Config {
 				c.addf(path+".name", "duplicate check name %q, already used by checks[%d]", chk.Name, first)
 			} else {
 				seen[chk.Name] = i
+			}
+		}
+		if chk.PushToken != "" {
+			if first, dup := tokens[chk.PushToken]; dup {
+				// The token itself is never echoed: an error message is
+				// read out loud, pasted into an issue and kept in a log.
+				c.addf(path+".token", "push token is already used by check %q: two checks cannot share one", first)
+			} else {
+				tokens[chk.PushToken] = chk.Name
 			}
 		}
 		cfg.Checks = append(cfg.Checks, chk)
@@ -725,7 +741,7 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin def
 
 	switch rc.Type {
 	case "":
-		c.addf(path+".type", "type is required, one of %q, %q, %q, %q", TypeHTTP, TypeTCP, TypeDNS, TypeDomain)
+		c.addf(path+".type", "type is required, one of %q, %q, %q, %q, %q", TypeHTTP, TypeTCP, TypeDNS, TypeDomain, TypePush)
 	case string(TypeHTTP):
 		chk.Type = TypeHTTP
 	case string(TypeTCP):
@@ -734,8 +750,10 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin def
 		chk.Type = TypeDNS
 	case string(TypeDomain):
 		chk.Type = TypeDomain
+	case string(TypePush):
+		chk.Type = TypePush
 	default:
-		c.addf(path+".type", "unknown check type %q, expected one of %q, %q, %q, %q", rc.Type, TypeHTTP, TypeTCP, TypeDNS, TypeDomain)
+		c.addf(path+".type", "unknown check type %q, expected one of %q, %q, %q, %q, %q", rc.Type, TypeHTTP, TypeTCP, TypeDNS, TypeDomain, TypePush)
 	}
 
 	applyTypeDefaults(&chk, origin, rc)
@@ -758,8 +776,9 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin def
 		c.addf(where, "domain checks must run at most once per hour (got interval %s): registries are not liveness endpoints", chk.Interval)
 	}
 	// Probes must not overlap, or consecutive results stop being independent
-	// samples and every rate in the system is computed over a wrong denominator.
-	if chk.Timeout >= chk.Interval {
+	// samples and every rate in the system is computed over a wrong
+	// denominator. A push check dials nothing, so it has neither.
+	if chk.Timeout >= chk.Interval && chk.Type != TypePush {
 		where := path + ".timeout"
 		if rc.Timeout == nil {
 			where = path
@@ -841,10 +860,127 @@ func resolveCheck(c *collector, path string, rc fileCheck, chk Check, origin def
 			c.addf(path+".resolver", "resolver is only valid on %q checks", TypeDNS)
 		}
 		chk.Host = resolveHost(c, path, rc, false)
+	case TypePush:
+		resolvePush(c, path, rc, &chk)
 	}
 
-	chk.Expect = resolveExpect(c, path, rc.Expect, chk.Timeout, chk.Type)
+	if chk.Type != TypePush {
+		if rc.ExpectEvery != nil {
+			c.addf(path+".expect_every", "expect_every is only valid on %q checks", TypePush)
+		}
+		if rc.Grace != nil {
+			c.addf(path+".grace", "grace is only valid on %q checks", TypePush)
+		}
+		if rc.Token != nil {
+			c.addf(path+".token", "token is only valid on %q checks", TypePush)
+		}
+		chk.Expect = resolveExpect(c, path, rc.Expect, chk.Timeout, chk.Type)
+	}
 	return chk
+}
+
+// resolvePush reads the three fields a dead-man check has and rejects the
+// ones it cannot have. A push check is the inverse of every other type:
+// nothing is dialled, so there is no target to name, no schedule to run on
+// and no response to assert about — only a deadline and the secret the
+// heartbeat is sent to.
+func resolvePush(c *collector, path string, rc fileCheck, chk *Check) {
+	if strings.TrimSpace(rc.URL) != "" {
+		c.addf(path+".url", "url is for %q checks; a %q check names no target, it is pinged", TypeHTTP, TypePush)
+	}
+	if len(rc.Headers) > 0 {
+		c.addf(path+".headers", "headers are only valid on %q checks", TypeHTTP)
+	}
+	if strings.TrimSpace(rc.Address) != "" {
+		c.addf(path+".address", "address is only valid on %q checks", TypeTCP)
+	}
+	if strings.TrimSpace(rc.Host) != "" {
+		c.addf(path+".host", "host is for %q and %q checks; a %q check names no target, it is pinged", TypeDNS, TypeDomain, TypePush)
+	}
+	if strings.TrimSpace(rc.Domain) != "" {
+		c.addf(path+".domain", "domain is for %q checks; a %q check names no target, it is pinged", TypeDomain, TypePush)
+	}
+	if rc.QueryType != "" {
+		c.addf(path+".query_type", "query_type is only valid on %q checks", TypeDNS)
+	}
+	if rc.Resolver != nil {
+		c.addf(path+".resolver", "resolver is only valid on %q checks", TypeDNS)
+	}
+	if rc.Interval != nil {
+		c.addf(path+".interval", "interval is not valid on %q checks: expect_every is the schedule, and it is the sender's, not lookout's", TypePush)
+	}
+	if rc.Timeout != nil {
+		c.addf(path+".timeout", "timeout is not valid on %q checks: nothing is dialled, so there is nothing to give up on", TypePush)
+	}
+	if rc.Expect != nil {
+		c.addf(path+".expect", "expect is not valid on %q checks: the ping arriving before the deadline is the whole condition", TypePush)
+	}
+
+	if rc.ExpectEvery == nil {
+		c.addf(path+".expect_every", "expect_every is required for %q checks (the deadline between pings, for example %q)", TypePush, "10m")
+	} else if v, ok := duration(c, path+".expect_every", *rc.ExpectEvery); ok {
+		if v < PushMinExpect {
+			c.addf(path+".expect_every", "expect_every %s is shorter than %s: a heartbeat that often is a liveness probe, which %q, %q and %q already do", v, PushMinExpect, TypeHTTP, TypeTCP, TypeDNS)
+		} else {
+			chk.ExpectEvery = v
+		}
+	}
+	if rc.Grace != nil {
+		if v, ok := slack(c, path+".grace", *rc.Grace); ok {
+			chk.Grace = v
+		}
+	}
+	chk.PushToken = resolveToken(c, path, rc)
+
+	// The deadline is read on the scheduler's tick like every other check,
+	// so the tick has to be shorter than the deadline it is watching.
+	chk.Interval = PushTick
+	if chk.ExpectEvery > 0 && chk.ExpectEvery < PushTick {
+		chk.Interval = chk.ExpectEvery
+	}
+	chk.Timeout = 0
+}
+
+// resolveToken reads the secret a heartbeat carries. It comes from the
+// environment for the same reason the bot token does: a config file is
+// copied, diffed and pasted into issues, and this one is a password.
+func resolveToken(c *collector, path string, rc fileCheck) string {
+	if rc.Token == nil {
+		c.addf(path+".token", "token is required for %q checks: it is the secret in the ping URL, and it belongs in the environment (%s)", TypePush, "token: ${LOOKOUT_PUSH_TOKEN_JOB}")
+		return ""
+	}
+	expanded, ok := expand(c, path+".token", *rc.Token)
+	if !ok {
+		return ""
+	}
+	token := strings.TrimSpace(expanded)
+	switch {
+	case token == "":
+		c.addf(path+".token", "push token is empty: an empty token would let anyone resolve this check")
+		return ""
+	case len(token) < PushMinToken:
+		// The value is never echoed, only its length.
+		c.addf(path+".token", "push token is %d characters, shortest accepted is %d: it is a password that travels in a URL", len(token), PushMinToken)
+		return ""
+	case !tokenChars(token):
+		c.addf(path+".token", "push token must be unreserved URL characters only (A-Z a-z 0-9 - . _ ~): it is a path segment")
+		return ""
+	}
+	return token
+}
+
+// tokenChars reports whether every byte is safe in a URL path segment, so
+// the token a cron line carries is the token lookout compares.
+func tokenChars(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '.', r == '_', r == '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func applyTypeDefaults(chk *Check, origin defaultOrigin, rc fileCheck) {
@@ -1237,6 +1373,22 @@ func duration(c *collector, path, raw string) (time.Duration, bool) {
 	}
 	if d <= 0 {
 		c.addf(path, "%q must be positive", raw)
+		return 0, false
+	}
+	return d, true
+}
+
+// slack accepts the same duration forms as duration, plus zero. Zero is a
+// meaningful answer for grace — the deadline is the deadline — while a
+// negative one would move the deadline earlier than it was declared.
+func slack(c *collector, path, raw string) (time.Duration, bool) {
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil {
+		c.addf(path, "%q is not a duration (expected forms like %q, %q, %q)", raw, "30s", "5m", "1h30m")
+		return 0, false
+	}
+	if d < 0 {
+		c.addf(path, "%q must be zero or positive", raw)
 		return 0, false
 	}
 	return d, true
