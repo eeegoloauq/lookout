@@ -35,7 +35,7 @@ jobs:
       - run: go test -race ./...
       - run: CGO_ENABLED=0 go build ./cmd/lookout
       # The example config is documentation, and documentation that does not
-      # load is worse than none. LOOKOUT_BASIC_AUTH stands in for the secret
+      # load is worse than none. LOOKOUT_BASIC_AUTH and LOOKOUT_PUSH_TOKEN_ZFS stand in for the secrets
       # the example reads from the environment.
       - name: validate the example config
-        run: LOOKOUT_BASIC_AUTH=x go run ./cmd/lookout validate config.example.yaml
+        run: LOOKOUT_BASIC_AUTH=x LOOKOUT_PUSH_TOKEN_ZFS=xxxxxxxxxxxxxxxx go run ./cmd/lookout validate config.example.yaml
