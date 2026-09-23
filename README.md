@@ -1,11 +1,19 @@
+<div align="center">
+
 # lookout
 
-A lightweight uptime monitor in Go: HTTP, TCP, DNS and dead-man checks, a status page, Telegram alerts.
+**A lightweight uptime monitor in Go.**
+
+[![Release](https://img.shields.io/github/v/release/eeegoloauq/lookout?label=release)](https://github.com/eeegoloauq/lookout/releases/latest)
+
+HTTP, TCP, DNS and dead-man checks, a status page, Telegram alerts.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/board-light.png">
-  <img alt="The lookout status board" src="docs/board-dark.png">
+  <img alt="The lookout status board" src="docs/board-dark.png" width="85%">
 </picture>
+
+</div>
 
 ## Try it
 
