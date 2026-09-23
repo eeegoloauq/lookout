@@ -1,19 +1,16 @@
-<div align="center">
-
 # lookout
 
-**A lightweight uptime monitor in Go.**
+An uptime monitor in Go: HTTP, TCP, DNS and push checks, a status page and Telegram alerts. One
+binary and one YAML file.
 
 [![Release](https://img.shields.io/github/v/release/eeegoloauq/lookout?label=release)](https://github.com/eeegoloauq/lookout/releases/latest)
-
-HTTP, TCP, DNS and dead-man checks, a status page, Telegram alerts.
+[![CI](https://github.com/eeegoloauq/lookout/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/eeegoloauq/lookout/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/board-light.png">
-  <img alt="The lookout status board" src="docs/board-dark.png" width="85%">
+  <img alt="The lookout status board" src="docs/board-dark.png">
 </picture>
-
-</div>
 
 ## Try it
 
@@ -21,19 +18,34 @@ HTTP, TCP, DNS and dead-man checks, a status page, Telegram alerts.
 go run github.com/eeegoloauq/lookout/cmd/lookout@latest demo
 ```
 
-The board above on the local demo server, filled with invented data. Nothing is
-probed and no configuration is read.
+This serves the board above with made-up data. Nothing is probed and no config is read.
 
 ## Run it
 
 ```sh
 CGO_ENABLED=0 go build -o lookout ./cmd/lookout
-cp config.example.yaml config.yaml    # edit it
-./lookout validate config.yaml
+cp config.example.yaml config.yaml
+```
+
+Edit `config.yaml` before the first run:
+
+- Replace the example checks with yours.
+- Point `state.file`, `state.history` and `state.samples` at a directory you can write to. The
+  example uses `/var/lib/lookout/`.
+- Alerts need `LOOKOUT_TELEGRAM_TOKEN` and `LOOKOUT_TELEGRAM_CHAT_ID` in the environment. To run
+  without alerts, set `alerting.mode: none`.
+- The example also reads `LOOKOUT_BASIC_AUTH` and `LOOKOUT_PUSH_TOKEN_ZFS`. Set them or delete the
+  checks that use them.
+
+```sh
+./lookout validate config.yaml   # lists every problem with its line number
 ./lookout run config.yaml
 ```
 
-Or as a container:
+`run` refuses a config that does not validate. The page listens on `127.0.0.1:5665` by default
+(`listen:`).
+
+As a container:
 
 ```sh
 docker run -d --name lookout \
@@ -44,100 +56,86 @@ docker run -d --name lookout \
   ghcr.io/eeegoloauq/lookout:latest
 ```
 
-Configuration is one YAML file, and `config.example.yaml` is its reference:
-every option is in it with a comment saying what it is for. `validate` reports
-every problem at once with the line each one is on, and `run` refuses to start
-on a config that does not pass.
+Set `listen: 0.0.0.0:5665` in the config for the port mapping to reach it.
 
-## What it checks
+`config.example.yaml` is the configuration reference: every option is there with a comment.
 
-**http** — status code, response time, a substring of the body, or a JSON path
-compared against a value. A body path that stops resolving reports `malformed`
-rather than `down`.
+## Checks
 
-**tcp** — dials a `host:port` and hangs up without sending anything: a
-database, a broker, an SSH daemon, a container that exposes nothing but a port.
+- **http**: status code, response time, a substring of the body, or a JSON path compared with a
+  value. A JSON path that no longer resolves reports `malformed` instead of `down`.
+- **tcp**: connects to `host:port` and closes the connection without sending anything. For
+  databases, brokers, SSH and other services that only expose a port.
+- **dns**: A, AAAA, MX, NS or TXT against a resolver you choose. A lost UDP packet is retried. An
+  answer that differs from the first one seen is reported as drift; SERVFAIL fails the check.
+- **push**: a dead-man switch for jobs such as backups and renewals. The job calls lookout when it
+  finishes, and the check goes down when a call does not arrive in time.
+- **domain**: registration expiry over RDAP, or WHOIS where the TLD has no RDAP, checked once a
+  day. A domain check is added automatically for every host your http and dns checks use; declare
+  one yourself to set its interval or group.
+- TLS certificate expiry is read from the handshake of an `https` http check. There is no separate
+  check type for it.
 
-**dns** — A, AAAA, MX, NS or TXT against a resolver you name. A lost UDP packet
-is retried rather than counted, and a changed answer set is reported as drift
-against the first answer seen. SERVFAIL fails the check instead of counting as
-drift.
-
-**push** — the dead-man switch, for work that has no port to dial: a backup, a
-sync, a certificate renewal. Nothing is probed. The job reports in when it
-finishes and the check goes down when a report does not arrive in time, which
-is the one failure a probe can never see — a job that stopped running is not
-there to say so, and the machine it ran on may be the thing that is gone.
+A push check:
 
 ```yaml
   - name: ZFS tank
     group: Jobs
     type: push
-    expect_every: 10m                   # the deadline between pings
-    grace: 2m                           # optional slack, default 0
-    token: ${LOOKOUT_PUSH_TOKEN_ZFS}    # the secret in the ping URL
+    expect_every: 10m                   # deadline between pings
+    grace: 2m                           # optional, default 0
+    token: ${LOOKOUT_PUSH_TOKEN_ZFS}    # secret part of the ping URL
 ```
 
 ```sh
-# in the crontab, after the job itself
+# crontab: ping after the job succeeds
 0 3 * * * /usr/local/bin/backup.sh && curl -fsS "$LOOKOUT_PUSH_URL"
-# or, when the job knows it went wrong
+# or report the failure
 0 3 * * * /usr/local/bin/backup.sh || curl -fsS "$LOOKOUT_PUSH_URL?status=fail&msg=backup+failed"
 ```
 
-lookout re-reads the deadline once a minute and confirms a missed ping with
-the same `failure_threshold` every other check uses, so a silent job is DOWN a
-few minutes after its deadline rather than on the second.
+The URL is `http://<listen>/api/push/<token>`, GET or POST, and answers 204. An unknown token gets
+a plain 404. `msg` is cut to 200 characters and shown on the page. The deadline is checked once a
+minute and a missed ping goes through the same `failure_threshold` as other checks, so the check
+turns DOWN a few minutes after the deadline. Unlike `mute`, this endpoint is not limited to
+loopback, so `listen:` must be reachable from the machine running the job.
 
-The URL is `http://<listen>/api/push/<token>`, POST or GET, answering 204. A
-token nothing knows gets a 404 that says nothing about which half was wrong.
-`msg` is kept to 200 characters and shown on the page beside the ping.
-Unlike mute, this endpoint is not loopback-only — the machine doing the work is
-somewhere else — so `listen:` has to be an address that machine can reach.
+## Alerts
 
-**TLS and domain expiry** — certificate dates are read out of the handshake an
-`https` check already performs, and registration dates are looked up once a day
-over RDAP (WHOIS where there is no RDAP) for the names your checks already
-point at. Neither needs a second block of config.
+A check goes down after a set number of consecutive failures and comes back after a set number of
+consecutive successes. A second detector catches a service that keeps flapping between the two.
 
-## When something breaks
+Alerts go to Telegram:
 
-A check goes down after a few consecutive failures and comes back after a few
-consecutive successes; both counts are yours to set. A second detector catches
-the service that alternates rather than fails, which a consecutive counter
-never sees.
+- Changes within a short window are sent as one message.
+- An outage that stays open is repeated on the schedule you set.
+- Once a week lookout sends a message that it is still running.
+- Every event is written to a durable queue first and removed only after Telegram confirms
+  delivery.
 
-The message goes to Telegram. Everything that changed within a short window
-leaves as one message, an outage that stays open repeats on a schedule you
-choose, and once a week lookout reports that it is still running. Every event
-is written to a durable queue before anything tries to send it, and leaves that
-queue only once Telegram confirms it arrived.
+Quiet hours are set with `mute:` in the config, or ad hoc with
+`lookout mute --for 2h --group Public`. Checks keep running while muted. What happened during the
+mute is sent as one summary when it ends.
 
-Quiet hours are a schedule in the config, or `lookout mute --for 2h --group
-Public` when you are about to break something on purpose. Probes keep running
-either way; only delivery stops, and what happened during the mute arrives as
-one summary when it lifts.
-
-## The page
+## Status page and API
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/detail-light.png">
   <img alt="A check expanded to show why it failed" src="docs/detail-dark.png">
 </picture>
 
-Every row opens into what the check watches, when it broke, what it said,
-uptime over three windows, how the response time is spread, a month of days
-one square each, and a bar of the last 24 hours. It is server-rendered HTML
-with no framework and nothing loaded from a CDN.
+Each row opens to show what the check watches, when it failed and with what error, uptime over
+three windows, the response time distribution, the last 30 days and the last 24 hours. The page is
+server-rendered HTML with no framework and no CDN assets.
 
-Alongside it, `/api/status` is versioned JSON, `/metrics` is Prometheus text,
-and `/healthz` returns 503 when alerts are piling up undelivered.
+- `/api/status`: versioned JSON.
+- `/metrics`: Prometheus text format.
+- `/healthz`: 503 when alerts are queued and not delivered.
 
-## Deploying
+## Deploy with systemd
 
-`contrib/systemd/lookout.service` runs it as its own user with
-`ProtectSystem=strict` and an empty capability set. Secrets come from an
-environment file, never from the config:
+`contrib/systemd/lookout.service` runs lookout as its own user with `ProtectSystem=strict` and no
+capabilities. Secrets go in an environment file, not in the config:
 
 ```sh
 install -o root -g root -m 0755 lookout /usr/bin/lookout
@@ -147,53 +145,48 @@ install -d -o root   -g lookout -m 0750 /etc/lookout
 install -o root -g lookout -m 0640 config.yaml /etc/lookout/config.yaml
 install -o root -g lookout -m 0600 contrib/lookout.env.example /etc/lookout/lookout.env
 install -o root -g root -m 0644 contrib/systemd/lookout.service /etc/systemd/system/
-# put the bot token and chat id in /etc/lookout/lookout.env, then
+# add the bot token and chat id to /etc/lookout/lookout.env, then
 systemctl enable --now lookout
 ```
 
-Point `state.file` and its neighbours at `/var/lib/lookout/`, or
-`ProtectSystem=strict` will not let lookout write them.
+The state files must be under `/var/lib/lookout/`; `ProtectSystem=strict` blocks writes elsewhere.
 
-### Staying current
+### Updates
 
-`contrib/lookout-update` moves an installed lookout to the latest release. It
-fetches the published binary and `SHA256SUMS`, refuses to install on a checksum
-mismatch or a binary that will not load the running config, and puts the
-previous binary back if the restarted service does not answer `/healthz`. The
-three most recent binaries it replaced stay in `/var/backups/lookout`.
+`contrib/lookout-update` installs the latest release. It downloads the binary and `SHA256SUMS`,
+stops on a checksum mismatch or if the new binary cannot load the running config, and restores the
+previous binary if the restarted service fails `/healthz`. The last three replaced binaries are
+kept in `/var/backups/lookout`.
 
 ```sh
 install -o root -g root -m 0755 contrib/lookout-update /usr/local/bin/
-lookout-update            # or --dry-run to see what it would do
+lookout-update            # --dry-run shows what it would do
 ```
 
-`REPO`, `BIN`, `CONFIG`, `SERVICE`, `HEALTH_URL`, `BACKUP_DIR` and `RELEASES`
-are read from the environment, so a fork or a second instance needs no edit.
-For unattended updates, install `contrib/systemd/lookout-update.{service,timer}`
-and `systemctl enable --now lookout-update.timer`; it runs daily with a couple
-of hours of jitter.
+`REPO`, `BIN`, `CONFIG`, `SERVICE`, `HEALTH_URL`, `BACKUP_DIR` and `RELEASES` can be overridden
+from the environment. For daily unattended updates, install
+`contrib/systemd/lookout-update.{service,timer}` and run
+`systemctl enable --now lookout-update.timer`.
 
 ## Limits
 
-Every probe leaves from the machine lookout runs on, so it cannot see its own
-host go down; an external monitor is a different job.
+- All probes run from the lookout host, so it cannot report its own host going down. Use an
+  external monitor for that.
+- Alerts go to Telegram only.
+- Checks are added in the config, not on the page.
+- The page reloads itself with an inline script, or with a meta refresh when JavaScript is off.
+  Rows open through a checkbox and `:has()`; browsers without `:has()` show the board but cannot
+  open rows.
 
-Notifications go to Telegram and nowhere else. Checks are added by editing the
-config, not through the page.
-
-The status page is server-rendered. An inline script delays reload while a row
-is open; without JavaScript, a meta refresh still reloads the page. Rows open
-through a checkbox and `:has()`. A browser without `:has()` shows the whole
-board and never opens a row.
-
-## Contributing
-
-`docs/design.md` covers the decisions that look strange from outside: no
-database, no keep-alives, two statuses instead of three. Read it before
-proposing a change to one of them.
+## Development
 
 ```sh
 go vet ./... && go test -race ./...
 ```
 
-MIT.
+`docs/design.md` explains the less obvious decisions: no database, no keep-alives, two statuses
+instead of three.
+
+## License
+
+MIT
