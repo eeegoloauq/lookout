@@ -13,7 +13,7 @@ A lightweight uptime monitor in Go: HTTP, TCP, DNS and dead-man checks, a status
 go run github.com/eeegoloauq/lookout/cmd/lookout@latest demo
 ```
 
-The board above on `127.0.0.1:5665`, filled with invented data. Nothing is
+The board above on the local demo server, filled with invented data. Nothing is
 probed and no configuration is read.
 
 ## Run it
@@ -173,9 +173,10 @@ host go down; an external monitor is a different job.
 Notifications go to Telegram and nowhere else. Checks are added by editing the
 config, not through the page.
 
-The status page renders without JavaScript, so a row opens through a checkbox
-and `:has()`. A browser without `:has()` shows the whole board and never opens
-a row.
+The status page is server-rendered. An inline script delays reload while a row
+is open; without JavaScript, a meta refresh still reloads the page. Rows open
+through a checkbox and `:has()`. A browser without `:has()` shows the whole
+board and never opens a row.
 
 ## Contributing
 

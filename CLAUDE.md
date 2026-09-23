@@ -1,73 +1,35 @@
 # lookout
 
-Uptime monitor. One Go binary, no database, no runtime deps beyond two modules.
-Config is YAML, state is one JSON file, alerts go to Telegram.
+Lookout is a single-binary uptime monitor for HTTP, TCP, DNS, and missed job heartbeats. It serves a status board and API, keeps state in files, and sends Telegram alerts. It is meant for operators who want checks configured in YAML and a board they can inspect quickly.
 
-## Layout
-
-```
-cmd/lookout       CLI: validate, run, demo, mute, unmute, test-alert, version
-internal/config   YAML -> Check structs, and every validation error the user gets
-internal/probe    http, tcp, dns, domain — one file each, all return check.Result
-internal/check    Result type and condition evaluation (status, body, latency, rcode)
-internal/state    up/down machine, thresholds, incident log, alert outbox, durable store
-internal/monitor  the scheduler; owns state + history, folds results in, emits events
-internal/alert    event -> message text -> Telegram, with batching and retries
-internal/history  24h ring in memory, per-day JSONL, sample seed file
-internal/web      status page, /api/status, /metrics, /healthz
-internal/registry RDAP and WHOIS parsing
-internal/demo     synthetic board for `lookout demo` and for the screenshots
-internal/mute     scheduled and ad-hoc silence windows
-internal/push     dead-man checks: the ping table and the deadline judging it
-```
-
-Data flows one way. `monitor` calls a `probe`, gets a `check.Result`, hands it to
-`state.Machine`, which returns events. Events go to the outbox, the outbox goes to
-`alert`. Nothing calls back up the stack.
-
-## Rules
-
-A probe never returns an error. A failed probe is a `check.Result` with an
-outcome, because "the check failed" and "the monitor is broken" are different
-events and must not share a code path.
-
-Silence means everything is fine, so silence must never be a bug. Alerting is on
-for every check unless the config says `alert: false`. Never add a code path that
-can swallow an event.
-
-`lookout validate` catches what would otherwise crash `run`. A config error at
-2am means monitoring is down. If you add a config field, add its validation and
-its error message in the same change.
-
-No database. It was considered and rejected — see docs/design.md. Do not add one,
-do not add a cache layer, do not add a queue.
-
-Comments say why, not what. If a line looks wrong but is deliberate, the comment
-is what stops the next person from "fixing" it. Match that; the codebase is
-consistent about it.
-
-Keep-alives are off in the HTTP probe on purpose. A reused connection skips DNS,
-TCP and TLS, which are the layers the check exists to cover.
-
-The status page has no JavaScript, no external asset and no build step. The six
-inline lines only pause the reload timer while a row is open. Keep it that way.
-
-## Working on it
+## Commands
 
 ```sh
-go vet ./... && go test -race ./...
-go run ./cmd/lookout demo                       # board on 127.0.0.1:5665, probes nothing
-go run ./cmd/lookout demo -write /tmp/page.html # same board as a file
-go run ./cmd/lookout validate config.example.yaml
+CGO_ENABLED=0 go build -o lookout ./cmd/lookout
+./lookout validate config.yaml
+./lookout run config.yaml
+go run ./cmd/lookout demo
+go vet ./...
+go test -race ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+gofmt -l .
 ```
 
-Anything on a clock is tested in a `testing/synctest` bubble on a fake clock.
-Write new time-dependent tests the same way. There are no `time.Sleep` calls in
-the test suite and there should not be.
+CI also validates `config.example.yaml` with placeholder secrets. Run that validation when changing configuration. Use `testing/synctest` for clock-sensitive tests where it applies; existing tests also use real sleeps, so do not assume the suite is sleep-free.
 
-Tests must not name a real host, address or domain. Use the reserved ones:
-`example.com`, `.example`, `.invalid`, `.lan`, `198.51.100.0/24`. This repo is
-public.
+## Deploy and rollback
 
-Commit messages are a sentence saying what changed and why, in English, present
-tense, no prefix tags. Look at `git log` before writing one.
+Version tags trigger release binaries, checksums, and a container image. The systemd installation and optional update timer are described in [README.md](README.md). `contrib/lookout-update` verifies the binary checksum, validates the running config, restarts the service, checks `/healthz`, and restores the previous binary if health fails. For a manual rollback, install a retained prior binary and restart the service, then check `/healthz`. No container rollout or rollback automation is tracked here.
+
+## Decisions and gotchas
+
+- Alerting defaults on. State changes enter a durable outbox before Telegram delivery and leave only after confirmation. Do not bypass it or silently discard events.
+- `validate` must reject invalid configuration before `run` starts. Add validation and a useful error with each new setting.
+- HTTP probes disable keep-alives so each check observes DNS, TCP, and TLS again. Probes also ignore inherited proxy settings.
+- Push tokens appear in request URLs and may be sent from other hosts. Keep them out of logs and status output. Mute actions are loopback-only.
+- The status board is server-rendered and uses a small inline script to defer reload while a row is open; without JavaScript, a meta refresh reloads it.
+- File storage instead of a database, the full connection probe, and the board's scope are deliberate choices; see [docs/design.md](docs/design.md) before changing them. No database, cache layer or queue.
+- A probe never returns an error: a failure is a `check.Result` with a reason.
+- Tests never name a real host, address or domain — use reserved example ones (public repo).
+
+Planned larger work: `ROADMAP.md`.
