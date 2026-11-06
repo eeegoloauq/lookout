@@ -43,6 +43,7 @@ jobs:
           : > "$RUNNER_TEMP/notes.md"
           git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
           git tag -l --format='%(contents)' "$TAG" > "$RUNNER_TEMP/notes.md"
+          cat contrib/release-install.md >> "$RUNNER_TEMP/notes.md"
 
       - uses: softprops/action-gh-release@v3
         with:
